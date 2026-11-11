@@ -1,3 +1,4 @@
+
 const express = require("express");
 
 const {
@@ -21,6 +22,7 @@ const {
 
 const authenticateToken = require("../middlewares/authMiddleware");
 const authorizeRoles = require("../middlewares/authorizeRoles");
+const upload = require("../middlewares/uploadMiddleware");
 
 const router = express.Router();
 
@@ -35,7 +37,7 @@ router.get(
   getMyEvents
 );
 
-// Super Admin: daftar konser yang menunggu approval
+// Super Admin: daftar konser pending
 router.get(
   "/pending",
   authenticateToken,
@@ -43,7 +45,7 @@ router.get(
   getPendingEvents
 );
 
-// Event Organizer: menambahkan kategori tiket
+// Event Organizer: kategori tiket
 router.post(
   "/:id/tickets",
   authenticateToken,
@@ -51,7 +53,6 @@ router.post(
   createTicketCategory
 );
 
-// EO: melihat kategori tiket
 router.get(
   "/:id/tickets",
   authenticateToken,
@@ -59,7 +60,6 @@ router.get(
   getTicketCategories
 );
 
-// EO: mengedit kategori tiket
 router.put(
   "/:id/tickets/:ticketId",
   authenticateToken,
@@ -67,7 +67,6 @@ router.put(
   updateTicketCategory
 );
 
-// EO: menghapus kategori tiket
 router.delete(
   "/:id/tickets/:ticketId",
   authenticateToken,
@@ -75,22 +74,21 @@ router.delete(
   deleteTicketCategory
 );
 
-// Customer: detail konser
-router.get("/:id", getEventById);
-
-// Event Organizer: membuat konser
+// Event Organizer: membuat konser + upload poster
 router.post(
   "/",
   authenticateToken,
   authorizeRoles("organizer"),
+  upload.single("poster"),
   createEvent
 );
 
-// Event Organizer: mengubah konser
+// Event Organizer: mengubah konser + upload poster opsional
 router.put(
   "/:id",
   authenticateToken,
   authorizeRoles("organizer"),
+  upload.single("poster"),
   updateEvent
 );
 
@@ -117,5 +115,8 @@ router.patch(
   authorizeRoles("super_admin"),
   rejectEvent
 );
+
+// Customer: detail konser
+router.get("/:id", getEventById);
 
 module.exports = router;

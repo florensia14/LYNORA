@@ -1,54 +1,89 @@
 
 const db = require("../config/database");
-const snap = require("../config/midtrans");
+const midtransConfig = require("../config/midtrans");
+const crypto = require("crypto");
 
-// ==========================================
-// CUSTOMER - MIDTRANS PAYMENT
-// ==========================================
+const {
+  buildSnapParameter,
+  isSnapTokenUsable,
+  mapMidtransError,
+  toRupiahInteger,
+} = require("../utils/midtransHelpers");
+
+function generateMidtransOrderId(orderId) {
+  return `LYN-${orderId}-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
+}
+
+function isOrderExpired(expiresAt) {
+  const time = new Date(expiresAt).getTime();
+  return !Number.isFinite(time) || time <= Date.now();
+}
 
 async function createPayment(req, res) {
   let connection;
+  let lockAcquired = false;
   let transactionStarted = false;
 
-  try {
-    const orderId = Number(req.params.id);
-    const customerId = req.user.id;
+  const orderId = Number(req.params.id);
+  const customerId = req.user?.id;
+  const lockName = `lynora_pay_${orderId}`;
 
+  try {
     if (!Number.isSafeInteger(orderId) || orderId <= 0) {
-      return res.status(400).json({
-        message: "ID order tidak valid",
-      });
+      return res.status(400).json({ message: "ID order tidak valid" });
     }
 
-    if (
-      !process.env.MIDTRANS_SERVER_KEY ||
-      !process.env.MIDTRANS_CLIENT_KEY
-    ) {
+    if (!customerId) {
+      return res.status(401).json({ message: "Belum terautentikasi" });
+    }
+
+    const config = midtransConfig.validateConfiguration();
+
+    if (!config.ready) {
       return res.status(503).json({
-        message: "Konfigurasi Midtrans Sandbox belum tersedia",
+        message: "Konfigurasi Midtrans belum siap",
       });
     }
 
     connection = await db.getConnection();
+
+    const [lockRows] = await connection.execute(
+      "SELECT GET_LOCK(?, 10) AS acquired",
+      [lockName]
+    );
+
+    if (Number(lockRows[0]?.acquired) !== 1) {
+      return res.status(409).json({
+        message: "Pembayaran sedang diproses. Coba kembali.",
+      });
+    }
+
+    lockAcquired = true;
+
     await connection.beginTransaction();
     transactionStarted = true;
 
     const [orders] = await connection.execute(
-      `SELECT id, order_code, customer_id, total_amount,
-              status, expires_at
-       FROM orders
-       WHERE id = ? AND customer_id = ?
+      `SELECT
+         o.id,
+         o.order_code,
+         o.customer_id,
+         o.total_amount,
+         o.status,
+         o.expires_at,
+         u.name AS customer_name,
+         u.email AS customer_email
+       FROM orders o
+       INNER JOIN users u ON u.id = o.customer_id
+       WHERE o.id = ? AND o.customer_id = ?
        FOR UPDATE`,
       [orderId, customerId]
     );
 
-    if (orders.length === 0) {
+    if (!orders.length) {
       await connection.rollback();
       transactionStarted = false;
-
-      return res.status(404).json({
-        message: "Order tidak ditemukan",
-      });
+      return res.status(404).json({ message: "Order tidak ditemukan" });
     }
 
     const order = orders[0];
@@ -56,75 +91,327 @@ async function createPayment(req, res) {
     if (order.status !== "pending") {
       await connection.rollback();
       transactionStarted = false;
-
       return res.status(400).json({
         message: "Order tidak dalam status pending",
       });
     }
 
-    if (new Date(order.expires_at) <= new Date()) {
+    if (isOrderExpired(order.expires_at)) {
       await connection.rollback();
       transactionStarted = false;
-
       return res.status(400).json({
         message: "Masa pembayaran order sudah berakhir",
       });
     }
 
-    const [existingPayments] = await connection.execute(
-      `SELECT snap_token, snap_redirect_url
+    const amount = toRupiahInteger(order.total_amount);
+
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        message: "Nominal order tidak valid",
+      });
+    }
+
+    // Ambil ringkasan pembayaran.
+    const [paymentRows] = await connection.execute(
+      `SELECT id, status
        FROM payments
        WHERE order_id = ?
-       AND method = 'midtrans'
-       AND status = 'pending'
-       AND snap_token IS NOT NULL
-       LIMIT 1`,
+       FOR UPDATE`,
       [orderId]
     );
 
-    if (existingPayments.length > 0) {
+    let payment = paymentRows[0];
+
+    // Buat ringkasan pembayaran jika belum ada.
+    if (!payment) {
+      const initialMidtransId = generateMidtransOrderId(orderId);
+
+      const [insertResult] = await connection.execute(
+        `INSERT INTO payments (
+           order_id,
+           midtrans_order_id,
+           amount,
+           status,
+           transaction_status
+         )
+         VALUES (?, ?, ?, 'pending', 'pending')`,
+        [orderId, initialMidtransId, amount]
+      );
+
+      payment = {
+        id: insertResult.insertId,
+        status: "pending",
+      };
+    }
+
+    if (payment.status === "success" || payment.status === "refunded") {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(409).json({
+        message: "Pembayaran order sudah diproses",
+      });
+    }
+
+    // Ambil percobaan pembayaran terbaru.
+    const [attemptRows] = await connection.execute(
+      `SELECT *
+       FROM payment_attempts
+       WHERE order_id = ?
+       ORDER BY id DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [orderId]
+    );
+
+    const latestAttempt = attemptRows[0] || null;
+
+    if (latestAttempt?.status === "success") {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(409).json({
+        message: "Order sudah berhasil dibayar",
+      });
+    }
+
+    // Gunakan kembali token yang masih berlaku.
+    if (
+      latestAttempt?.status === "pending" &&
+      latestAttempt.snap_token &&
+      isSnapTokenUsable({
+        tokenCreatedAt: latestAttempt.snap_token_created_at,
+        orderExpiresAt: order.expires_at,
+      })
+    ) {
       await connection.commit();
       transactionStarted = false;
 
       return res.json({
-        message: "Halaman pembayaran sudah tersedia",
+        message: "Halaman pembayaran masih tersedia",
         payment: {
-          snap_token: existingPayments[0].snap_token,
-          redirect_url: existingPayments[0].snap_redirect_url,
+          snap_token: latestAttempt.snap_token,
+          redirect_url: latestAttempt.redirect_url,
         },
       });
     }
 
-    const parameter = {
-      transaction_details: {
-        order_id: order.order_code,
-        gross_amount: Number(order.total_amount),
-      },
-      expiry: {
-        unit: "minute",
-        duration: 15,
-      },
-    };
+    /*
+     * Jangan membuat percobaan baru jika percobaan sebelumnya
+     * masih pending. Statusnya harus diperiksa melalui Midtrans
+     * terlebih dahulu, termasuk jika token sudah tidak berlaku.
+     */
+    if (latestAttempt?.status === "pending") {
+      await connection.rollback();
+      transactionStarted = false;
 
-    const transaction = await snap.createTransaction(parameter);
+      return res.status(409).json({
+        message:
+          "Transaksi sebelumnya masih perlu diverifikasi. Silakan coba kembali setelah statusnya diperbarui.",
+      });
+    }
+
+    const [itemRows] = await connection.execute(
+      `SELECT
+         oi.ticket_category_id,
+         oi.quantity,
+         oi.price_at_purchase,
+         tc.name
+       FROM order_items oi
+       INNER JOIN ticket_categories tc
+         ON tc.id = oi.ticket_category_id
+       WHERE oi.order_id = ?
+       ORDER BY oi.id`,
+      [orderId]
+    );
+
+    if (!itemRows.length) {
+      await connection.rollback();
+      transactionStarted = false;
+      return res.status(400).json({
+        message: "Order tidak memiliki item tiket",
+      });
+    }
+
+    const items = itemRows.map((item) => ({
+      id: item.ticket_category_id,
+      name: item.name,
+      price: item.price_at_purchase,
+      quantity: item.quantity,
+    }));
+
+    const midtransOrderId = generateMidtransOrderId(orderId);
+
+    // Simpan percobaan terlebih dahulu agar webhook dapat mengenalinya.
+    await connection.execute(
+      `INSERT INTO payment_attempts (
+         payment_id,
+         order_id,
+         midtrans_order_id,
+         amount,
+         status,
+         transaction_status
+       )
+       VALUES (?, ?, ?, ?, 'pending', 'pending')`,
+      [payment.id, orderId, midtransOrderId, amount]
+    );
 
     await connection.execute(
-      `INSERT INTO payments
-       (order_id, method, amount, status,
-        transaction_id, payment_type, snap_token,
-        snap_redirect_url, transaction_status)
-       VALUES (?, 'midtrans', ?, 'pending',
-               NULL, NULL, ?, ?, 'pending')`,
-      [
-        orderId,
-        order.total_amount,
-        transaction.token,
-        transaction.redirect_url,
-      ]
+      `UPDATE payments
+       SET midtrans_order_id = ?,
+           amount = ?,
+           status = 'pending',
+           transaction_id = NULL,
+           snap_token = NULL,
+           redirect_url = NULL,
+           payment_type = NULL,
+           transaction_status = 'pending',
+           fraud_status = NULL,
+           transaction_time = NULL,
+           settled_at = NULL,
+           expired_at = NULL,
+           midtrans_response = NULL
+       WHERE id = ?`,
+      [midtransOrderId, amount, payment.id]
     );
 
     await connection.commit();
     transactionStarted = false;
+
+    // Buat parameter Snap.
+    let snapParameter;
+
+    try {
+      snapParameter = buildSnapParameter({
+        order: {
+          ...order,
+          order_code: midtransOrderId,
+        },
+        items,
+        customer: {
+          name: order.customer_name,
+          email: order.customer_email,
+        },
+      });
+    } catch (error) {
+      await connection.execute(
+        `UPDATE payment_attempts
+         SET status = 'failed',
+             transaction_status = 'failed'
+         WHERE midtrans_order_id = ?
+           AND status = 'pending'`,
+        [midtransOrderId]
+      );
+
+      await connection.execute(
+        `UPDATE payments
+         SET status = 'failed',
+             transaction_status = 'failed'
+         WHERE id = ?
+           AND midtrans_order_id = ?
+           AND status = 'pending'`,
+        [payment.id, midtransOrderId]
+      );
+
+      console.error("[midtrans] Parameter error:", error.message);
+
+      return res.status(400).json({
+        message: "Data pembayaran tidak valid",
+      });
+    }
+
+    // Minta transaksi Snap ke Midtrans.
+    let transaction;
+
+    try {
+      transaction = await midtransConfig
+        .getSnap()
+        .createTransaction(snapParameter);
+    } catch (error) {
+      const mapped = mapMidtransError(error);
+
+      console.error(
+        `[midtrans] Create transaction error (${mapped.code}):`,
+        mapped.logDetail
+      );
+
+      /*
+       * Jangan langsung mengubah status menjadi failed untuk
+       * gangguan jaringan/server. Transaksi mungkin sudah dibuat.
+       */
+      if (
+        mapped.code !== "upstream_unavailable" &&
+        mapped.code !== "upstream_error"
+      ) {
+        await connection.execute(
+          `UPDATE payment_attempts
+           SET status = 'failed',
+               transaction_status = 'failed'
+           WHERE midtrans_order_id = ?
+             AND status = 'pending'`,
+          [midtransOrderId]
+        );
+
+        await connection.execute(
+          `UPDATE payments
+           SET status = 'failed',
+               transaction_status = 'failed'
+           WHERE id = ?
+             AND midtrans_order_id = ?
+             AND status = 'pending'`,
+          [payment.id, midtransOrderId]
+        );
+      }
+
+      return res.status(mapped.status).json({
+        message: mapped.message,
+      });
+    }
+
+    if (!transaction?.token) {
+      return res.status(502).json({
+        message:
+          "Token belum diterima. Status transaksi perlu diperiksa kembali.",
+      });
+    }
+
+    // Simpan token pada percobaan pembayaran.
+    const [attemptUpdate] = await connection.execute(
+      `UPDATE payment_attempts
+       SET snap_token = ?,
+           redirect_url = ?,
+           snap_token_created_at = NOW()
+       WHERE midtrans_order_id = ?
+         AND status = 'pending'`,
+      [
+        transaction.token,
+        transaction.redirect_url || null,
+        midtransOrderId,
+      ]
+    );
+
+    if (attemptUpdate.affectedRows === 0) {
+      return res.status(409).json({
+        message: "Status transaksi sudah berubah",
+      });
+    }
+
+    // Update ringkasan hanya jika percobaan ini masih yang terbaru.
+    await connection.execute(
+      `UPDATE payments
+       SET snap_token = ?,
+           redirect_url = ?
+       WHERE id = ?
+         AND midtrans_order_id = ?
+         AND status = 'pending'`,
+      [
+        transaction.token,
+        transaction.redirect_url || null,
+        payment.id,
+        midtransOrderId,
+      ]
+    );
 
     return res.status(201).json({
       message: "Halaman pembayaran berhasil dibuat",
@@ -135,511 +422,36 @@ async function createPayment(req, res) {
     });
   } catch (error) {
     if (connection && transactionStarted) {
-      await connection.rollback();
-      transactionStarted = false;
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error("[midtrans] Rollback error:", rollbackError.message);
+      }
     }
 
-    console.error("Create Midtrans payment error:", error.message);
+    console.error("[midtrans] Create payment error:", error.message);
 
     return res.status(500).json({
       message: "Gagal membuat pembayaran Midtrans",
     });
   } finally {
-    if (connection) connection.release();
-  }
-}
-
-// ==========================================
-// CUSTOMER - MANUAL BANK TRANSFER
-// ==========================================
-
-async function uploadPaymentProof(req, res) {
-  let connection;
-  let transactionStarted = false;
-
-  try {
-    const orderId = Number(req.params.id);
-    const customerId = req.user.id;
-
-    if (!Number.isSafeInteger(orderId) || orderId <= 0) {
-      return res.status(400).json({
-        message: "ID order tidak valid",
-      });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({
-        message: "Bukti pembayaran wajib diunggah",
-      });
-    }
-
-    const proofImage = `/uploads/payments/${req.file.filename}`;
-
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-    transactionStarted = true;
-
-    const [orders] = await connection.execute(
-      `SELECT id, customer_id, total_amount, status, expires_at
-       FROM orders
-       WHERE id = ? AND customer_id = ?
-       FOR UPDATE`,
-      [orderId, customerId]
-    );
-
-    if (orders.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(404).json({
-        message: "Order tidak ditemukan",
-      });
-    }
-
-    const order = orders[0];
-
-    if (
-      order.status !== "pending" ||
-      new Date(order.expires_at) <= new Date()
-    ) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Order sudah tidak dapat menerima pembayaran",
-      });
-    }
-
-    // Cek pembayaran Midtrans yang masih aktif
-    const [midtransPayments] = await connection.execute(
-      `SELECT id
-       FROM payments
-       WHERE order_id = ?
-       AND method = 'midtrans'
-       AND status IN ('pending', 'success')
-       LIMIT 1
-       FOR UPDATE`,
-      [orderId]
-    );
-
-    if (midtransPayments.length > 0) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(409).json({
-        message: "Order sudah memiliki pembayaran Midtrans",
-      });
-    }
-
-    // Cek pembayaran transfer manual sebelumnya
-    const [existingPayments] = await connection.execute(
-      `SELECT id, status
-       FROM payments
-       WHERE order_id = ?
-       AND method = 'bank_transfer'
-       LIMIT 1
-       FOR UPDATE`,
-      [orderId]
-    );
-
-    let paymentId;
-
-    if (existingPayments.length > 0) {
-      const existingPayment = existingPayments[0];
-
-      if (existingPayment.status !== "rejected") {
-        await connection.rollback();
-        transactionStarted = false;
-
-        return res.status(409).json({
-          message:
-            "Bukti transfer sedang menunggu verifikasi atau sudah diproses",
-        });
+    if (connection) {
+      try {
+        if (lockAcquired) {
+          await connection.execute(
+            "SELECT RELEASE_LOCK(?)",
+            [lockName]
+          );
+        }
+      } catch (error) {
+        console.error("[midtrans] Release lock error:", error.message);
+      } finally {
+        connection.release();
       }
-
-      // Perbarui bukti yang sebelumnya ditolak
-      paymentId = existingPayment.id;
-
-      await connection.execute(
-        `UPDATE payments
-         SET proof_image = ?,
-             amount = ?,
-             status = 'pending',
-             rejection_reason = NULL,
-             verified_by = NULL,
-             paid_at = NULL
-         WHERE id = ?`,
-        [proofImage, order.total_amount, paymentId]
-      );
-    } else {
-      // Buat pembayaran manual baru
-      const [result] = await connection.execute(
-        `INSERT INTO payments
-         (order_id, method, amount, proof_image, status)
-         VALUES (?, 'bank_transfer', ?, ?, 'pending')`,
-        [orderId, order.total_amount, proofImage]
-      );
-
-      paymentId = result.insertId;
     }
-
-    await connection.commit();
-    transactionStarted = false;
-
-    return res.status(201).json({
-      message: "Bukti pembayaran berhasil dikirim",
-      payment: {
-        id: paymentId,
-        order_id: orderId,
-        method: "bank_transfer",
-        amount: order.total_amount,
-        proof_image: proofImage,
-        status: "pending",
-      },
-    });
-  } catch (error) {
-    if (connection && transactionStarted) {
-      await connection.rollback();
-      transactionStarted = false;
-    }
-
-    console.error("Upload payment proof error:", error.message);
-
-    return res.status(500).json({
-      message: "Gagal mengunggah bukti pembayaran",
-    });
-  } finally {
-    if (connection) connection.release();
   }
 }
-
-// ==========================================
-// SUPER ADMIN - LIST PENDING TRANSFERS
-// ==========================================
-
-async function getPendingManualPayments(req, res) {
-  try {
-    const [payments] = await db.execute(
-      `SELECT
-         p.id AS payment_id,
-         p.order_id,
-         o.order_code,
-         o.customer_id,
-         p.amount,
-         p.proof_image,
-         p.status,
-         p.created_at,
-         o.expires_at
-       FROM payments p
-       INNER JOIN orders o ON o.id = p.order_id
-       WHERE p.method = 'bank_transfer'
-       AND p.status = 'pending'
-       ORDER BY p.created_at ASC`
-    );
-
-    return res.json({
-      message: "Daftar pembayaran manual berhasil diambil",
-      total: payments.length,
-      payments,
-    });
-  } catch (error) {
-    console.error("Get pending payments error:", error.message);
-
-    return res.status(500).json({
-      message: "Gagal mengambil daftar pembayaran",
-    });
-  }
-}
-
-// ==========================================
-// SUPER ADMIN - APPROVE MANUAL TRANSFER
-// ==========================================
-
-async function approveManualPayment(req, res) {
-  let connection;
-  let transactionStarted = false;
-
-  try {
-    const paymentId = Number(req.params.id);
-    const adminId = req.user.id;
-
-    if (!Number.isSafeInteger(paymentId) || paymentId <= 0) {
-      return res.status(400).json({
-        message: "ID pembayaran tidak valid",
-      });
-    }
-
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-    transactionStarted = true;
-
-    const [payments] = await connection.execute(
-      `SELECT
-         p.id,
-         p.order_id,
-         p.amount,
-         p.status,
-         p.method,
-         o.status AS order_status,
-         o.expires_at,
-         o.total_amount
-       FROM payments p
-       INNER JOIN orders o ON o.id = p.order_id
-       WHERE p.id = ?
-       FOR UPDATE`,
-      [paymentId]
-    );
-
-    if (payments.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(404).json({
-        message: "Pembayaran tidak ditemukan",
-      });
-    }
-
-    const payment = payments[0];
-
-    if (payment.method !== "bank_transfer") {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Pembayaran ini bukan transfer manual",
-      });
-    }
-
-    if (payment.status !== "pending") {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Pembayaran sudah diproses sebelumnya",
-      });
-    }
-
-    if (payment.order_status !== "pending") {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Order tidak dalam status pending",
-      });
-    }
-
-    if (new Date(payment.expires_at) <= new Date()) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Order sudah kedaluwarsa",
-      });
-    }
-
-    if (
-      Number(payment.amount).toFixed(2) !==
-      Number(payment.total_amount).toFixed(2)
-    ) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Nominal pembayaran tidak sesuai dengan order",
-      });
-    }
-
-    // Pastikan tidak ada pembayaran Midtrans yang sudah berhasil
-    const [otherPayments] = await connection.execute(
-      `SELECT id
-       FROM payments
-       WHERE order_id = ?
-       AND method = 'midtrans'
-       AND status = 'success'
-       LIMIT 1
-       FOR UPDATE`,
-      [payment.order_id]
-    );
-
-    if (otherPayments.length > 0) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(409).json({
-        message: "Order sudah dibayar melalui Midtrans",
-      });
-    }
-
-    await connection.execute(
-      `UPDATE payments
-       SET status = 'success',
-           verified_by = ?,
-           paid_at = NOW()
-       WHERE id = ?`,
-      [adminId, paymentId]
-    );
-
-    await connection.execute(
-      `UPDATE orders
-       SET status = 'paid'
-       WHERE id = ?`,
-      [payment.order_id]
-    );
-
-    await connection.commit();
-    transactionStarted = false;
-
-    return res.json({
-      message: "Pembayaran transfer berhasil disetujui",
-      payment_id: paymentId,
-      order_id: payment.order_id,
-      payment_status: "success",
-      order_status: "paid",
-    });
-  } catch (error) {
-    if (connection && transactionStarted) {
-      await connection.rollback();
-      transactionStarted = false;
-    }
-
-    console.error("Approve payment error:", error.message);
-
-    return res.status(500).json({
-      message: "Gagal menyetujui pembayaran",
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-}
-
-// ==========================================
-// SUPER ADMIN - REJECT MANUAL TRANSFER
-// ==========================================
-
-async function rejectManualPayment(req, res) {
-  let connection;
-  let transactionStarted = false;
-
-  try {
-    const paymentId = Number(req.params.id);
-    const adminId = req.user.id;
-    const { rejection_reason } = req.body;
-
-    if (!Number.isSafeInteger(paymentId) || paymentId <= 0) {
-      return res.status(400).json({
-        message: "ID pembayaran tidak valid",
-      });
-    }
-
-    if (
-      typeof rejection_reason !== "string" ||
-      !rejection_reason.trim()
-    ) {
-      return res.status(400).json({
-        message: "Alasan penolakan wajib diisi",
-      });
-    }
-
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-    transactionStarted = true;
-
-    const [payments] = await connection.execute(
-      `SELECT
-         p.id,
-         p.order_id,
-         p.status,
-         p.method,
-         o.status AS order_status
-       FROM payments p
-       INNER JOIN orders o ON o.id = p.order_id
-       WHERE p.id = ?
-       FOR UPDATE`,
-      [paymentId]
-    );
-
-    if (payments.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(404).json({
-        message: "Pembayaran tidak ditemukan",
-      });
-    }
-
-    const payment = payments[0];
-
-    if (payment.method !== "bank_transfer") {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Pembayaran ini bukan transfer manual",
-      });
-    }
-
-    if (payment.status !== "pending") {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Pembayaran sudah diproses sebelumnya",
-      });
-    }
-
-    if (payment.order_status !== "pending") {
-      await connection.rollback();
-      transactionStarted = false;
-
-      return res.status(400).json({
-        message: "Order tidak dalam status pending",
-      });
-    }
-
-    await connection.execute(
-      `UPDATE payments
-       SET status = 'rejected',
-           rejection_reason = ?,
-           verified_by = ?
-       WHERE id = ?`,
-      [rejection_reason.trim(), adminId, paymentId]
-    );
-
-    await connection.commit();
-    transactionStarted = false;
-
-    return res.json({
-      message: "Bukti pembayaran berhasil ditolak",
-      payment_id: paymentId,
-      order_id: payment.order_id,
-      payment_status: "rejected",
-      order_status: "pending",
-      rejection_reason: rejection_reason.trim(),
-    });
-  } catch (error) {
-    if (connection && transactionStarted) {
-      await connection.rollback();
-      transactionStarted = false;
-    }
-
-    console.error("Reject payment error:", error.message);
-
-    return res.status(500).json({
-      message: "Gagal menolak pembayaran",
-    });
-  } finally {
-    if (connection) connection.release();
-  }
-}
-
-// ==========================================
-// EXPORT CONTROLLERS
-// ==========================================
 
 module.exports = {
   createPayment,
-  uploadPaymentProof,
-  getPendingManualPayments,
-  approveManualPayment,
-  rejectManualPayment,
 };

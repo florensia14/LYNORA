@@ -3,44 +3,41 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 
-// Folder penyimpanan bukti pembayaran
-const uploadDir = path.join(__dirname, "../../uploads/payments");
+const uploadDir = path.join(__dirname, "../uploads/posters");
 
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Konfigurasi penyimpanan
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
 
   filename: (req, file, cb) => {
-    const uniqueName =
-      `payment-${Date.now()}-${Math.round(Math.random() * 1e9)}` +
-      path.extname(file.originalname).toLowerCase();
+    const extension = path.extname(file.originalname).toLowerCase();
 
-    cb(null, uniqueName);
+    const filename = `poster-${Date.now()}-${Math.round(
+      Math.random() * 1e9
+    )}${extension}`;
+
+    cb(null, filename);
   },
 });
 
-// Validasi tipe file
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = [
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-  ];
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
 
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error("Format file harus JPG, PNG, atau WEBP"));
+  if (!allowedTypes.includes(file.mimetype)) {
+    return cb(
+      new Error("Format file harus JPG, PNG, atau WEBP")
+    );
   }
+
+  cb(null, true);
 };
 
-const uploadPaymentProof = multer({
+const upload = multer({
   storage,
   fileFilter,
   limits: {
@@ -48,4 +45,4 @@ const uploadPaymentProof = multer({
   },
 });
 
-module.exports = uploadPaymentProof;
+module.exports = upload;
