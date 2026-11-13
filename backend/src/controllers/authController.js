@@ -1,3 +1,4 @@
+
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/database");
@@ -16,11 +17,38 @@ function createToken(user) {
 
 async function register(req, res) {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, phone, password } = req.body;
 
-    if (!name || !email || !password) {
+    if (!name || !email || !phone || !password) {
       return res.status(400).json({
-        message: "Nama, email, dan password wajib diisi",
+        message: "Nama, email, nomor telepon, dan password wajib diisi",
+      });
+    }
+
+    if (typeof name !== "string" ||
+        typeof email !== "string" ||
+        typeof phone !== "string" ||
+        typeof password !== "string") {
+      return res.status(400).json({
+        message: "Format data tidak valid",
+      });
+    }
+
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = phone.trim();
+
+    if (!normalizedName || !normalizedEmail || !normalizedPhone) {
+      return res.status(400).json({
+        message: "Semua data wajib diisi",
+      });
+    }
+
+    if (normalizedName.length > 100 ||
+        normalizedEmail.length > 150 ||
+        normalizedPhone.length > 20) {
+      return res.status(400).json({
+        message: "Panjang data melebihi batas yang ditentukan",
       });
     }
 
@@ -29,8 +57,6 @@ async function register(req, res) {
         message: "Password minimal 8 karakter",
       });
     }
-
-    const normalizedEmail = email.trim().toLowerCase();
 
     const [existingUsers] = await db.execute(
       "SELECT id FROM users WHERE email = ?",
@@ -46,22 +72,29 @@ async function register(req, res) {
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const [result] = await db.execute(
-      `INSERT INTO users (name, email, password, role)
-       VALUES (?, ?, ?, 'customer')`,
-      [name.trim(), normalizedEmail, hashedPassword]
+      `INSERT INTO users (name, email, phone, password, role)
+       VALUES (?, ?, ?, ?, 'customer')`,
+      [
+        normalizedName,
+        normalizedEmail,
+        normalizedPhone,
+        hashedPassword,
+      ]
     );
 
     return res.status(201).json({
       message: "Registrasi berhasil",
       user: {
         id: result.insertId,
-        name: name.trim(),
+        name: normalizedName,
         email: normalizedEmail,
+        phone: normalizedPhone,
         role: "customer",
       },
     });
   } catch (error) {
     console.error("Register error:", error.message);
+
     return res.status(500).json({
       message: "Terjadi kesalahan saat registrasi",
     });
@@ -126,6 +159,7 @@ async function login(req, res) {
     });
   } catch (error) {
     console.error("Login error:", error.message);
+
     return res.status(500).json({
       message: "Terjadi kesalahan saat login",
     });
@@ -150,6 +184,7 @@ async function getMe(req, res) {
     return res.json({ user: users[0] });
   } catch (error) {
     console.error("Get profile error:", error.message);
+
     return res.status(500).json({
       message: "Gagal mengambil data akun",
     });
