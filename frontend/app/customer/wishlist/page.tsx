@@ -1,28 +1,51 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import CustomerShell from "@/components/layout/CustomerShell";
-import {
-  formatCurrency,
-  formatDateRange,
-  imageUrl,
-  type Concert,
-} from "@/lib/customer";
+import { imageUrl, type Concert } from "@/lib/customer";
+import { fetchConcerts } from "@/lib/api";
 
-/* ------------------------------------------------------------------ */
-/* Constants                                                           */
-/* ------------------------------------------------------------------ */
-
-const STORAGE_KEY = "lynora_wishlist";
-const FALLBACK_POSTER = "/images/hero/home.jpg";
+/* -------------------------------------------------------------------------- */
+/* Types & constants                                                          */
+/* -------------------------------------------------------------------------- */
 
 type WishlistTab = "all" | "upcoming" | "past";
+type StatusKey = "comingSoon" | "onSale" | "new";
+
+type WishlistEvent = Omit<
+  Concert,
+  "artist" | "artist_country" | "artists" | "price"
+> & {
+  wishlist_id?: number;
+  wishlisted_at?: string;
+  starting_price?: number | string | null;
+  price?: number | string | null;
+  sales_status?: string | null;
+  artists?: { id?: number; name?: string | null; country?: string | null }[];
+  artist?: string | null;
+  artist_country?: string | null;
+  organizer_name?: string | null;
+};
+
+type WishlistResponse = {
+  message?: string;
+  total?: number;
+  items?: WishlistEvent[];
+  wishlists?: WishlistEvent[];
+};
+
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+).replace(/\/+$/, "");
+
+const FALLBACK_POSTER = "/images/hero/home.jpg";
+const TOAST_DURATION_MS = 2500;
 
 const TABS: { value: WishlistTab; label: string }[] = [
   { value: "all", label: "All Saved" },
   { value: "upcoming", label: "Upcoming" },
-  { value: "past", label: "Past Sale" },
+  { value: "past", label: "Past Events" },
 ];
 
 const CATEGORIES = [
@@ -35,54 +58,69 @@ const CATEGORIES = [
   { label: "K-Pop", value: "K-Pop", icon: "disco-ball.png" },
 ];
 
-const GRID_CLASS =
-  "grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 min-[1500px]:grid-cols-4";
+const GRID =
+  "grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3";
 
-const PRIMARY_GRADIENT = "bg-gradient-to-r from-[#8065E9] to-[#A65BE8]";
+const STATUS: Record<StatusKey, { text: string; style: string }> = {
+  comingSoon: { text: "Coming Soon", style: "bg-[#2E2723] text-[#F5B84E]" },
+  onSale: { text: "On Sale", style: "bg-[#152B32] text-[#26ADA0]" },
+  new: { text: "New", style: "bg-[#2F1E2A] text-[#FF6B81]" },
+};
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/* Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
 
-const startOfToday = () => new Date().setHours(0, 0, 0, 0);
-
-function isUpcoming(concert: Concert) {
-  const start = new Date(concert.start_date).getTime();
-  return !Number.isNaN(start) && start >= startOfToday();
+function toNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function isPast(concert: Concert) {
-  const end = new Date(concert.end_date || concert.start_date).getTime();
-  return !Number.isNaN(end) && end < startOfToday();
-}
+function normalizeWishlistEvent(event: WishlistEvent): WishlistEvent {
+  const artists = Array.isArray(event.artists) ? event.artists : [];
+  const firstArtist = artists.find((artist) => artist?.name);
 
-function normalizeCategory(value?: string | null) {
-  return (value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  return {
+    ...event,
+    id: Number(event.id),
+    description: event.description ?? null,
+    poster_url: event.poster_url ?? null,
+    end_date: event.end_date || event.start_date,
+    price: toNumber(event.starting_price ?? event.price),
+    artist: event.artist ?? firstArtist?.name ?? null,
+    artist_country: event.artist_country ?? firstArtist?.country ?? null,
+    artists,
+  };
 }
 
 function getPoster(path?: string | null) {
-  return path ? imageUrl(path) : FALLBACK_POSTER;
+  if (!path?.trim()) return null;
+
+  const isLocalOrRemote =
+    path.startsWith("/images/") ||
+    path.startsWith("/icons/") ||
+    /^https?:\/\//i.test(path);
+
+  return isLocalOrRemote ? path : imageUrl(path);
 }
 
-function getEventStatus(concert: Concert) {
-  return isPast(concert)
-    ? { label: "PAST SALE", className: "bg-[#42202F] text-[#FF879D]" }
-    : { label: "ON SALE", className: "bg-[#153B3B] text-[#48D6BB]" };
-}
+function formatPrice(price?: number | string | null) {
+  const amount = toNumber(price);
+  if (amount === undefined) return "Price unavailable";
 
-function formatPrice(price?: number) {
-  if (typeof price !== "number") return "Price unavailable";
   return new Intl.NumberFormat("id-ID", {
     style: "currency",
     currency: "IDR",
     maximumFractionDigits: 0,
-  }).format(price);
+  }).format(amount);
 }
 
-function formatDate(date?: string) {
+function formatDate(date?: string | null) {
   if (!date) return "Date unavailable";
   const parsed = new Date(date);
   if (Number.isNaN(parsed.getTime())) return "Date unavailable";
+
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
     day: "2-digit",
@@ -94,60 +132,70 @@ function formatDate(date?: string) {
   }).format(parsed).replace(",", " ·");
 }
 
-function getDescription(concert: Concert) {
-  return concert.venue_name
-    ? `Enjoy an unforgettable live concert experience at ${concert.venue_name}.`
-    : "Enjoy an unforgettable live concert experience.";
+function getDescription(concert: WishlistEvent) {
+  return concert.description?.trim() || "Description not available.";
 }
 
-type WishlistStatus = "comingSoon" | "onSale" | "new";
-const STATUS_STYLES: Record<WishlistStatus, { label: string; className: string }> = {
-  comingSoon: { label: "Coming Soon", className: "bg-[#2E2723] text-[#F5B84E]" },
-  onSale: { label: "On Sale", className: "bg-[#152B32] text-[#26ADA0]" },
-  new: { label: "New", className: "bg-[#2F1E2A] text-[#FF6B81]" },
-};
+function getStatus(concert: WishlistEvent): StatusKey {
+  const salesStatus = String(concert.sales_status || "").toLowerCase();
 
-function getCardStatus(concert: Concert): WishlistStatus {
-  const meta = concert as Concert & { status?: string | null; created_at?: string | null };
-  const raw = (meta.status || "").toLowerCase();
-  if (raw.includes("sale")) return "onSale";
-  if (raw.includes("soon") || raw.includes("coming")) return "comingSoon";
-  if (raw === "new") return "new";
-  const created = meta.created_at ? new Date(meta.created_at).getTime() : NaN;
-  if (!Number.isNaN(created) && Date.now() - created < 14 * 24 * 60 * 60 * 1000) return "new";
+  if (salesStatus === "on_sale") return "onSale";
+  if (salesStatus === "coming_soon" || salesStatus === "not_available") {
+    return "comingSoon";
+  }
+
+  const rawStatus = String(concert.status || "").toLowerCase();
+  if (rawStatus === "new") return "new";
+
+  // Match Explore's safe default: do not infer "On Sale" from event date.
+  return "comingSoon";
+}
+
+function normalizeCategory(value?: string | null) {
+  return (value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+function isUpcoming(concert: WishlistEvent) {
   const start = new Date(concert.start_date).getTime();
-  if (!Number.isNaN(start) && start - Date.now() > 45 * 24 * 60 * 60 * 1000) return "comingSoon";
-  return "onSale";
+  return !Number.isNaN(start) && start >= new Date().setHours(0, 0, 0, 0);
 }
 
-function matchesSearch(concert: Concert, keyword: string) {
-  if (!keyword) return true;
-  return [concert.name, concert.category_name, concert.venue_name]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase()
-    .includes(keyword);
+function isPast(concert: WishlistEvent) {
+  const end = new Date(concert.end_date || concert.start_date).getTime();
+  return !Number.isNaN(end) && end < new Date().setHours(0, 0, 0, 0);
 }
 
-/* ------------------------------------------------------------------ */
-/* Icons                                                               */
-/* ------------------------------------------------------------------ */
+function getApiMessage(payload: unknown, fallback: string) {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "message" in payload &&
+    typeof (payload as { message?: unknown }).message === "string"
+  ) {
+    return (payload as { message: string }).message;
+  }
+  return fallback;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Small UI elements                                                          */
+/* -------------------------------------------------------------------------- */
 
 function Svg({
   children,
   className = "h-4 w-4",
-  strokeWidth = 2,
 }: {
   children: ReactNode;
   className?: string;
-  strokeWidth?: number;
 }) {
   return (
     <svg
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={strokeWidth}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       className={className}
       aria-hidden="true"
     >
@@ -156,86 +204,81 @@ function Svg({
   );
 }
 
-const SearchIcon = () => (
-  <Svg className="h-5 w-5">
-    <circle cx="11" cy="11" r="7" />
-    <path d="m16 16 4 4" />
-  </Svg>
-);
+function SearchIcon() {
+  return (
+    <Svg className="h-5 w-5">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+    </Svg>
+  );
+}
 
-const ChevronIcon = ({ open }: { open: boolean }) => (
-  <Svg className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}>
-    <path d="m6 9 6 6 6-6" />
-  </Svg>
-);
+function Chevron({ open = false }: { open?: boolean }) {
+  return (
+    <Svg className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}>
+      <path d="m6 9 6 6 6-6" />
+    </Svg>
+  );
+}
 
-const CheckIcon = () => (
-  <Svg className="h-4 w-4 text-[#A78BFA]" strokeWidth={2.5}>
-    <path d="m5 12 4 4L19 6" />
-  </Svg>
-);
+function TrashIcon() {
+  return (
+    <Svg className="h-4 w-4">
+      <path d="M3 6h18M8 6V4h8v2m2 0-1 14H7L6 6m4 4v6m4-6v6" />
+    </Svg>
+  );
+}
 
-const TrashIcon = () => (
-  <Svg strokeWidth={1.8}>
-    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5m4-5v5" />
-  </Svg>
-);
-
-function CategoryIcon({
-  icon,
-  className = "h-5 w-5",
-}: {
-  icon: string;
-  className?: string;
-}) {
+function CategoryIcon({ icon }: { icon: string }) {
   return (
     <img
       src={`/icons/${encodeURIComponent(icon)}`}
       alt=""
-      className={`${className} shrink-0 object-contain`}
-      onError={(e) => {
-        e.currentTarget.style.display = "none";
+      className="h-4 w-4 shrink-0 object-contain"
+      onError={(event) => {
+        event.currentTarget.style.visibility = "hidden";
       }}
     />
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Hero                                                                */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/* Hero — same image, height, overlay, title typography and search treatment  */
+/* as ExploreHero                                                             */
+/* -------------------------------------------------------------------------- */
 
 function WishlistHero({
   tab,
-  setTab,
+  onTabChange,
   search,
-  setSearch,
+  onSearch,
 }: {
   tab: WishlistTab;
-  setTab: (value: WishlistTab) => void;
+  onTabChange: (tab: WishlistTab) => void;
   search: string;
-  setSearch: (value: string) => void;
+  onSearch: (value: string) => void;
 }) {
   return (
-    <section className="relative isolate overflow-hidden rounded-xl border border-white/10">
+    <section className="relative isolate min-h-[300px] overflow-hidden rounded-xl border border-white/10 bg-[#0B1020] sm:min-h-[312px]">
       <img
         src={FALLBACK_POSTER}
         alt=""
-        className="absolute inset-0 -z-20 h-full w-full object-cover"
+        className="absolute inset-0 -z-20 h-full w-full object-cover object-center"
       />
-      <div className="absolute inset-0 -z-10 bg-gradient-to-r from-[#15132F]/90 via-[#17143B]/65 to-[#101426]/45" />
-      <div className="absolute inset-0 -z-10 bg-gradient-to-t from-[#0B1020]/80 to-transparent" />
+      <div className="absolute inset-0 -z-10 bg-gradient-to-b from-[#080D20]/35 via-[#080D20]/45 to-[#080D20]/80" />
 
-      <div className="flex min-h-[270px] flex-col justify-between p-5 sm:min-h-[290px] sm:p-7 lg:p-8">
-        <div className="flex flex-wrap gap-2">
+      <div className="relative flex min-h-[300px] flex-col px-5 py-5 sm:min-h-[312px] sm:px-6 sm:py-6 lg:px-7">
+        <div className="flex w-fit max-w-full flex-wrap items-center gap-2">
           {TABS.map((item) => (
             <button
               key={item.value}
               type="button"
-              onClick={() => setTab(item.value)}
-              className={`rounded-full px-4 py-1.5 text-xs font-bold transition ${
+              onClick={() => onTabChange(item.value)}
+              aria-pressed={tab === item.value}
+              className={`flex h-9 min-w-[112px] items-center justify-center rounded-full border px-5 text-sm font-bold transition sm:min-w-[145px] sm:text-base ${
                 tab === item.value
-                  ? `${PRIMARY_GRADIENT} text-white shadow-lg shadow-purple-500/20`
-                  : "border border-white/20 bg-white/10 text-white/80 hover:bg-white/20"
+                  ? "border-[#7950D5] bg-[#7950D5] text-white shadow-[0_4px_16px_rgba(121,80,213,0.28)]"
+                  : "border-white/25 bg-white/[0.06] text-white hover:border-[#8B5CF6] hover:bg-white/10"
               }`}
             >
               {item.label}
@@ -243,84 +286,86 @@ function WishlistHero({
           ))}
         </div>
 
-        <div className="mt-5">
-          <h1 className="bg-gradient-to-r from-[#A78BFA] via-[#9C8AF5] to-[#45D5E9] bg-clip-text text-4xl font-black leading-tight text-transparent sm:text-5xl">
+        <div className="mt-5 sm:mt-6">
+          <h1 className="w-fit bg-gradient-to-r from-[#8B7CF6] via-[#7C9CF0] to-[#22D3EE] bg-clip-text text-4xl font-black leading-[1.05] text-transparent sm:text-5xl lg:text-[52px]">
             MY WISHLIST
           </h1>
-          <p className="mt-1 text-sm font-semibold text-white">
+          <p className="mt-1 max-w-[560px] text-base font-bold leading-snug text-white sm:text-lg">
             Your saved concerts and events, all in one spot.
           </p>
         </div>
 
-        <div className="relative mt-5 w-full sm:max-w-[600px]">
-          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/80">
-            <SearchIcon />
-          </span>
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search concerts, artists, or venues..."
-            className="h-11 w-full rounded-lg border border-white/20 bg-gradient-to-r from-[#6756D8]/90 to-[#8875E8]/85 pl-11 pr-4 text-sm font-medium text-white outline-none transition placeholder:text-white/70 focus:border-[#B9A6FF] focus:ring-2 focus:ring-purple-400/30"
-          />
+        <div className="mt-5 sm:mt-5">
+          <label className="relative flex w-full min-w-0 sm:max-w-[490px]">
+            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white">
+              <SearchIcon />
+            </span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => onSearch(event.target.value)}
+              placeholder="Search concerts, artists, or venues..."
+              aria-label="Search wishlist"
+              className="h-12 w-full rounded-xl border border-white/25 bg-gradient-to-r from-[#5648D6]/90 to-[#8E80F3]/80 pl-12 pr-4 text-sm font-semibold text-white outline-none placeholder:text-white/70 focus-visible:ring-2 focus-visible:ring-[#22D3EE] sm:h-14"
+            />
+          </label>
         </div>
       </div>
     </section>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Category dropdown                                                   */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/* Category dropdown                                                          */
+/* -------------------------------------------------------------------------- */
 
 function CategoryDropdown({
   category,
-  setCategory,
+  onChange,
 }: {
   category: string;
-  setCategory: (value: string) => void;
+  onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = CATEGORIES.find((c) => c.value === category) ?? CATEGORIES[0];
+  const selected = CATEGORIES.find((item) => item.value === category) ?? CATEGORIES[0];
 
   return (
     <div className="relative">
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold text-white transition ${
+        className={`flex h-12 min-w-[150px] items-center gap-2 rounded-xl border px-3 text-sm font-bold text-white transition sm:h-14 ${
           open
-            ? "border-[#8875E8] bg-[#202A4F]"
-            : "border-white/10 bg-[#151B30] hover:border-[#8875E8]"
+            ? "border-[#8B5CF6] bg-[#202A4F]"
+            : "border-white/10 bg-[#10162E] hover:border-[#8B5CF6]"
         }`}
       >
-        <CategoryIcon icon={selected.icon} className="h-4 w-4" />
-        <span>{selected.label}</span>
-        <ChevronIcon open={open} />
+        <CategoryIcon icon={selected.icon} />
+        <span className="flex-1 text-left">{selected.label}</span>
+        <Chevron open={open} />
       </button>
 
       {open && (
         <>
           <button
             type="button"
-            aria-label="Close category dropdown"
+            aria-label="Close category menu"
             onClick={() => setOpen(false)}
-            className="fixed inset-0 z-40 cursor-default"
+            className="fixed inset-0 z-30 cursor-default"
           />
-
-          <div className="absolute right-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-xl border border-white/10 bg-[#151B30] p-1.5 shadow-2xl shadow-black/50">
+          <div className="absolute right-0 top-full z-40 mt-2 w-48 overflow-hidden rounded-xl border border-white/10 bg-[#151B30] p-1.5 shadow-2xl shadow-black/50">
             {CATEGORIES.map((item) => {
-              const active = category === item.value;
+              const active = item.value === category;
               return (
                 <button
                   key={item.value}
                   type="button"
                   onClick={() => {
-                    setCategory(item.value);
+                    onChange(item.value);
                     setOpen(false);
                   }}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs font-semibold transition ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs font-bold transition ${
                     active
                       ? "bg-[#6756D8]/30 text-white"
                       : "text-slate-300 hover:bg-white/10 hover:text-white"
@@ -328,7 +373,7 @@ function CategoryDropdown({
                 >
                   <CategoryIcon icon={item.icon} />
                   <span className="flex-1">{item.label}</span>
-                  {active && <CheckIcon />}
+                  {active && <span className="text-[#22D3EE]">✓</span>}
                 </button>
               );
             })}
@@ -339,15 +384,31 @@ function CategoryDropdown({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Event card                                                          */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/* Concert card — follows Explore card proportions and Home typography       */
+/* -------------------------------------------------------------------------- */
 
-function InfoRow({ icon, children, top = false }: { icon: string; children: ReactNode; top?: boolean }) {
+function InfoRow({
+  icon,
+  children,
+  top = false,
+}: {
+  icon: string;
+  children: ReactNode;
+  top?: boolean;
+}) {
   return (
-    <div className={`flex gap-2 text-xs text-[#D1D5E0] ${top ? "items-start leading-relaxed" : "items-center"}`}>
-      <img src={icon} alt="" className={`h-4 w-4 object-contain ${top ? "mt-0.5 shrink-0" : ""}`} />
-      {children}
+    <div
+      className={`flex gap-2 text-xs text-[#D1D5E0] ${
+        top ? "items-start leading-relaxed" : "items-center"
+      }`}
+    >
+      <img
+        src={icon}
+        alt=""
+        className={`h-4 w-4 shrink-0 object-contain ${top ? "mt-0.5" : ""}`}
+      />
+      <span className="min-w-0">{children}</span>
     </div>
   );
 }
@@ -356,84 +417,107 @@ function EventCard({
   concert,
   index,
   onRemove,
+  removing,
 }: {
-  concert: Concert;
+  concert: WishlistEvent;
   index: number;
   onRemove: (id: number) => void;
+  removing: boolean;
 }) {
-  const status = STATUS_STYLES[getCardStatus(concert)];
-  const detailHref = `/events/${concert.id}`;
-  const meta = concert as Concert & {
-    organizer_name?: string | null;
-    venue_address?: string | null;
-    artists?: { name?: string | null; country?: string | null }[];
-  };
-  const artistCountry = Array.from(
-    new Set(meta.artists?.map((artist) => artist.country).filter(Boolean)),
-  ).join(", ");
+  const status = STATUS[getStatus(concert)];
+  const poster = getPoster(concert.poster_url);
+  const artists = Array.isArray(concert.artists) ? concert.artists : [];
+  const artistLabel =
+    concert.artist ||
+    artists.map((artist) => artist.name).filter(Boolean).join(", ") ||
+    "To be announced";
+  const countryLabel =
+    concert.artist_country ||
+    artists.map((artist) => artist.country).filter(Boolean).join(", ") ||
+    "To be announced";
 
   return (
-    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-[#8B5CF6]/30 bg-[#202A4F] transition duration-300 hover:-translate-y-1 hover:border-[#22D3EE]">
-      <div className="relative h-[125px] overflow-hidden sm:h-[140px]">
-        <Link href={detailHref} className="block h-full w-full">
-          <img
-            src={getPoster(concert.poster_url)}
-            alt={concert.name}
-            loading={index > 2 ? "lazy" : "eager"}
-            onError={(event) => { event.currentTarget.src = FALLBACK_POSTER; }}
-            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-          />
+    <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-[#8B5CF6]/30 bg-[#202A4F] transition-[border-color,box-shadow,transform] duration-300 hover:-translate-y-1 hover:border-[#8B5CF6]/70 hover:shadow-[0_12px_28px_rgba(91,52,170,0.28)]">
+      <div className="relative aspect-[2/1] w-full overflow-hidden bg-[#171D37]">
+        <Link href={`/customer/explore/${concert.id}`} className="relative block h-full w-full">
+          {poster ? (
+            <>
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-[#31245D] via-[#202A4F] to-[#0B1122] px-4 text-center">
+                <span className="text-3xl font-black text-[#A78BFA]">LYNORA</span>
+                <span className="mt-1 line-clamp-2 text-xs font-semibold text-white/75">{concert.name}</span>
+                <span className="mt-1 text-[9px] font-bold tracking-[0.25em] text-[#22D3EE]">LIVE EXPERIENCE</span>
+              </div>
+              <img
+                src={poster}
+                alt={concert.name}
+                loading={index > 2 ? "lazy" : "eager"}
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+                className="relative h-full w-full object-cover transition duration-500 group-hover:scale-105"
+              />
+            </>
+          ) : (
+            <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-[#31245D] via-[#202A4F] to-[#0B1122] px-4 text-center">
+              <span className="text-3xl font-black text-[#A78BFA]">LYNORA</span>
+              <span className="mt-1 line-clamp-2 text-xs font-semibold text-white/75">{concert.name}</span>
+              <span className="mt-1 text-[9px] font-bold tracking-[0.25em] text-[#22D3EE]">LIVE EXPERIENCE</span>
+            </div>
+          )}
         </Link>
-        <span className={`absolute left-3 top-3 rounded-md px-3 py-1.5 text-xs font-extrabold ${status.className}`}>
-          {status.label}
+
+        <span className={`absolute left-3 top-3 rounded-md px-3 py-1.5 text-xs font-extrabold ${status.style}`}>
+          {status.text}
         </span>
+
         <button
           type="button"
-          onClick={() => onRemove(concert.id)}
+          onClick={() => onRemove(Number(concert.id))}
+          disabled={removing}
           title="Remove from wishlist"
           aria-label={`Remove ${concert.name} from wishlist`}
           aria-pressed="true"
-          className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-lg border border-white/25 bg-[#0B1020]/85 transition hover:scale-105 hover:border-[#8B5CF6]"
+          className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-lg border border-white/25 bg-[#0B1020]/85 transition hover:scale-105 hover:border-[#8B5CF6] disabled:cursor-wait disabled:opacity-60"
         >
           <img src="/icons/wishlist (1).png" alt="" className="h-5 w-5 object-contain" />
         </button>
-        <span className="absolute bottom-2 right-3 rounded-lg border border-[#8B5CF6] bg-[#0B1020]/95 px-2.5 py-1.5 text-xs font-extrabold text-white">
+
+        <span className="absolute bottom-3 right-3 rounded-lg border border-[#8B5CF6] bg-[#0B1020]/95 px-3 py-1.5 text-xs font-extrabold text-white">
           {formatPrice(concert.price)}
         </span>
       </div>
 
-      <div className="flex flex-1 flex-col p-3">
-        <span className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-[#22D3EE]">
-          Saved #{index + 1}
-        </span>
-        <Link href={detailHref}>
-          <h3 className="line-clamp-2 text-base font-extrabold leading-snug text-white transition group-hover:text-cyan-300 sm:text-[17px]">
+      <div className="flex flex-1 flex-col px-3 py-2.5">
+        <Link href={`/customer/explore/${concert.id}`}>
+          <h3 className="line-clamp-2 text-[15px] font-extrabold leading-snug text-white transition group-hover:text-white sm:text-base">
             {concert.name}
           </h3>
         </Link>
+
         <p className="mt-1 text-[13px] font-bold text-[#A78BFA]">
           {concert.category_name || "Live Concert"}
         </p>
+
         <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-[#A9AAB4]">
           {getDescription(concert)}
         </p>
+
         <div className="my-2.5 border-t border-white/20" />
+
         <div className="flex flex-col gap-2">
           <InfoRow icon="/icons/calendar (1).png">
             <strong>{formatDate(concert.start_date)}</strong>
           </InfoRow>
           <InfoRow icon="/icons/flag.png">
-            <span>From: <strong>{artistCountry || "To be announced"}</strong></span>
+            <span>From: <strong>{countryLabel}</strong></span>
           </InfoRow>
           <InfoRow icon="/icons/pin.png" top>
             <strong>
               {concert.venue_name || "Venue to be announced"}
-              {meta.venue_address ? `, ${meta.venue_address}` : ""}
+              {concert.venue_address ? `, ${concert.venue_address}` : ""}
             </strong>
           </InfoRow>
-          {meta.organizer_name && (
+          {concert.organizer_name && (
             <InfoRow icon="/icons/circus.png">
-              <span>Organized by: <strong>{meta.organizer_name}</strong></span>
+              <span>Organized by: <strong>{concert.organizer_name}</strong></span>
             </InfoRow>
           )}
         </div>
@@ -442,34 +526,27 @@ function EventCard({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Empty state                                                         */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/* Empty / error / toast states                                               */
+/* -------------------------------------------------------------------------- */
 
-function EmptyWishlist({ hasItems }: { hasItems: boolean }) {
+function EmptyWishlist({ hasSavedItems }: { hasSavedItems: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-[#151B30] px-5 py-16 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#6756D8]/20">
-        <img
-          src="/icons/wishlist.png"
-          alt=""
-          className="h-9 w-9 object-contain"
-        />
+        <img src="/icons/wishlist.png" alt="" className="h-9 w-9 object-contain" />
       </div>
-
       <h3 className="mt-5 text-lg font-extrabold text-white">
-        {hasItems ? "No concerts found" : "Your wishlist is still empty"}
+        {hasSavedItems ? "No concerts found" : "Your wishlist is still empty"}
       </h3>
-
       <p className="mt-2 max-w-md text-xs leading-relaxed text-slate-400">
-        {hasItems
-          ? "Try another keyword, category, or filter to find your saved concerts."
-          : "Save your favorite concerts by clicking the bookmark icon on the concert card, then find them here."}
+        {hasSavedItems
+          ? "Try another keyword, category, or tab to find your saved concerts."
+          : "Save your favorite concerts by clicking the bookmark icon on a concert card, then find them here."}
       </p>
-
       <Link
         href="/customer/explore"
-        className={`mt-6 inline-flex h-10 items-center justify-center rounded-lg ${PRIMARY_GRADIENT} px-6 text-xs font-extrabold text-white transition hover:brightness-110`}
+        className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-gradient-to-r from-[#8065E9] to-[#22D3E9] px-6 text-xs font-extrabold text-white transition hover:brightness-110"
       >
         EXPLORE CONCERTS
       </Link>
@@ -477,77 +554,213 @@ function EmptyWishlist({ hasItems }: { hasItems: boolean }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Page                                                                */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/* Page                                                                       */
+/* -------------------------------------------------------------------------- */
 
 export default function WishlistPage() {
-  const [items, setItems] = useState<Concert[]>([]);
+  const [items, setItems] = useState<WishlistEvent[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const [error, setError] = useState("");
   const [tab, setTab] = useState<WishlistTab>("all");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
+  const [removingId, setRemovingId] = useState<number | null>(null);
+  const [removingAll, setRemovingAll] = useState(false);
+  const [toast, setToast] = useState("");
 
-  // Load wishlist from the same localStorage key used by the homepage.
-  useEffect(() => {
-    const loadWishlist = () => {
-      try {
-        const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-        setItems(Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === "object" && "id" in item) : []);
-      } catch (error) {
-        console.error("Failed to load wishlist:", error);
-        setItems([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadWishlist();
-    window.addEventListener("lynora:wishlist-updated", loadWishlist);
-    window.addEventListener("storage", loadWishlist);
-    return () => {
-      window.removeEventListener("lynora:wishlist-updated", loadWishlist);
-      window.removeEventListener("storage", loadWishlist);
-    };
+  const showToast = useCallback((message: string) => {
+    setToast(message);
   }, []);
 
-  function persist(next: Concert[]) {
-    setItems(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      window.dispatchEvent(new CustomEvent("lynora:wishlist-updated"));
-    } catch (error) {
-      console.error("Failed to save wishlist:", error);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), TOAST_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const loadWishlist = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      window.location.href = "/login";
+      return;
     }
-  }
 
-  const removeItem = (id: number) => {
-    const removedConcert = items.find(
-      (item) => String(item.id) === String(id),
-    );
+    setLoading(true);
+    setError("");
 
-    const nextItems = items.filter(
-      (item) => String(item.id) !== String(id),
-    );
+    try {
+      const response = await fetch(`${API_BASE_URL}/wishlist`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
 
-    persist(nextItems);
+      const payload: unknown = await response.json().catch(() => null);
 
-    if (removedConcert) {
-      window.alert("Concert has been removed from your wishlist.");
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        window.location.href = "/login";
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(getApiMessage(payload, "Gagal mengambil Wishlist."));
+      }
+
+      const result = payload as WishlistResponse & { items?: WishlistEvent[] };
+      const wishlistRows = Array.isArray(result?.items)
+        ? result.items
+        : Array.isArray(result?.wishlists)
+          ? result.wishlists
+          : [];
+
+      // Use the same event records as Explore for poster, price, artist,
+      // venue, organizer, and category consistency. Keep the wishlist order.
+      let exploreEvents: Concert[] = [];
+      try {
+        exploreEvents = await fetchConcerts();
+      } catch (catalogError) {
+        console.warn("Explore catalog unavailable; using wishlist event data:", catalogError);
+      }
+
+      const normalizeName = (value?: string | null) =>
+        (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+      const exploreById = new Map(
+        exploreEvents.map((event) => [Number(event.id), event]),
+      );
+      const exploreByName = new Map(
+        exploreEvents.map((event) => [normalizeName(event.name), event]),
+      );
+
+      const mergedRows = wishlistRows.map((savedEvent) => {
+        // API wishlist returns the event ID as `id`; tolerate `event_id`
+        // too so catalog matching remains stable if the response shape changes.
+        const savedEventId = Number(
+          (savedEvent as WishlistEvent & { event_id?: number | string }).event_id ??
+          savedEvent.id,
+        );
+        const canonicalEvent =
+          exploreById.get(savedEventId) ||
+          exploreByName.get(normalizeName(savedEvent.name));
+
+        // Prefer the exact catalog record used by Explore for visual data,
+        // especially poster_url. Fall back to the saved row only when needed.
+        return normalizeWishlistEvent({
+          ...(savedEvent as WishlistEvent),
+          ...(canonicalEvent || {}),
+          id: savedEventId || Number(savedEvent.id),
+          wishlist_id: savedEvent.wishlist_id,
+          wishlisted_at: savedEvent.wishlisted_at,
+          poster_url:
+            (canonicalEvent?.poster_url || savedEvent.poster_url || null) as string | null,
+          price:
+            canonicalEvent?.price ?? savedEvent.starting_price ?? savedEvent.price,
+          starting_price:
+            (canonicalEvent as WishlistEvent | undefined)?.starting_price ??
+            savedEvent.starting_price,
+          category_name: canonicalEvent?.category_name || savedEvent.category_name,
+          venue_name: canonicalEvent?.venue_name || savedEvent.venue_name,
+          venue_address: canonicalEvent?.venue_address || savedEvent.venue_address,
+          organizer_name:
+            canonicalEvent?.organizer_name || savedEvent.organizer_name,
+          artists:
+            (canonicalEvent as WishlistEvent | undefined)?.artists?.length
+              ? (canonicalEvent as WishlistEvent).artists
+              : savedEvent.artists,
+          artist:
+            (canonicalEvent as WishlistEvent | undefined)?.artist || savedEvent.artist,
+          artist_country:
+            (canonicalEvent as WishlistEvent | undefined)?.artist_country ||
+            savedEvent.artist_country,
+        } as WishlistEvent);
+      });
+
+      setItems(mergedRows);
+    } catch (err) {
+      console.error("Load wishlist error:", err);
+      setError(err instanceof Error ? err.message : "Gagal mengambil Wishlist.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWishlist();
+  }, [loadWishlist]);
+
+  const removeItem = async (eventId: number) => {
+    const token = localStorage.getItem("token");
+    if (!token || removingId !== null) return;
+
+    setRemovingId(eventId);
+    try {
+      const response = await fetch(`${API_BASE_URL}/wishlist/${eventId}`, {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const payload: unknown = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(getApiMessage(payload, "Gagal menghapus event dari Wishlist."));
+      }
+
+      setItems((current) => current.filter((item) => Number(item.id) !== eventId));
+      showToast("Concert removed from your Wishlist.");
+      window.dispatchEvent(new CustomEvent("lynora:wishlist-updated"));
+    } catch (err) {
+      console.error("Remove wishlist error:", err);
+      showToast(err instanceof Error ? err.message : "Gagal menghapus event.");
+    } finally {
+      setRemovingId(null);
     }
   };
 
-  const removeAll = () => {
-    if (items.length === 0) return;
-
+  const removeAll = async () => {
+    if (items.length === 0 || removingAll) return;
     const confirmed = window.confirm(
-      "Are you sure you want to remove all concerts from your wishlist?",
+      "Are you sure you want to remove all concerts from your Wishlist?",
     );
-
     if (!confirmed) return;
 
-    persist([]);
-    window.alert("All concerts have been removed from your wishlist.");
+    const token = localStorage.getItem("token");
+    if (!token) {
+      window.location.href = "/login";
+      return;
+    }
+
+    setRemovingAll(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/wishlist`, {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const payload: unknown = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(getApiMessage(payload, "Gagal mengosongkan Wishlist."));
+      }
+
+      setItems([]);
+      showToast("Your Wishlist is now empty.");
+      window.dispatchEvent(new CustomEvent("lynora:wishlist-updated"));
+    } catch (err) {
+      console.error("Clear wishlist error:", err);
+      showToast(err instanceof Error ? err.message : "Gagal mengosongkan Wishlist.");
+    } finally {
+      setRemovingAll(false);
+    }
   };
 
   const filteredItems = useMemo(() => {
@@ -555,7 +768,20 @@ export default function WishlistPage() {
     const selectedCategory = normalizeCategory(category);
 
     return items.filter((concert) => {
-      if (!matchesSearch(concert, keyword)) return false;
+      const searchable = [
+        concert.name,
+        concert.description,
+        concert.artist,
+        concert.category_name,
+        concert.venue_name,
+        concert.venue_address,
+        concert.organizer_name,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      if (keyword && !searchable.includes(keyword)) return false;
       if (tab === "upcoming" && !isUpcoming(concert)) return false;
       if (tab === "past" && !isPast(concert)) return false;
       if (
@@ -570,99 +796,116 @@ export default function WishlistPage() {
 
   return (
     <CustomerShell title="Wishlist" subtitle="Your saved concerts for later">
-      <main className="mx-auto w-full max-w-[1600px] px-4 pb-12 pt-3 sm:px-6 lg:px-8">
+      <main className="mx-auto w-full max-w-[1600px] min-w-0 px-4 pb-12 pt-3 sm:px-6 lg:px-8">
         <WishlistHero
           tab={tab}
-          setTab={setTab}
+          onTabChange={setTab}
           search={search}
-          setSearch={setSearch}
+          onSearch={setSearch}
         />
 
-        {/* Section header */}
         <section className="mt-7 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="h-9 w-[5px] rounded-full bg-gradient-to-b from-[#22D3EE] to-[#8B5CF6]" />
-            <div>
-              <h2 className="text-sm font-extrabold text-white">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+            <span className="h-8 w-[5px] shrink-0 rounded-full bg-gradient-to-b from-[#8B5CF6] to-[#22D3EE] sm:h-11 sm:w-[6px]" />
+            <div className="min-w-0">
+              <h2 className="max-w-full break-words text-xl font-black leading-tight text-white sm:text-2xl lg:text-3xl">
                 {filteredItems.length} Saved Concerts
               </h2>
-              <p className="mt-0.5 text-[10px] text-slate-400">
+              <p className="mt-1 text-xs text-slate-400 sm:text-sm">
                 Your favorite events in one place
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <CategoryDropdown category={category} setCategory={setCategory} />
-
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+            <CategoryDropdown category={category} onChange={setCategory} />
             {items.length > 0 && (
               <button
                 type="button"
                 onClick={removeAll}
-                className="flex h-9 items-center gap-1.5 rounded-lg border border-[#E96B82]/30 bg-[#E96B82]/10 px-3 text-[10px] font-bold text-[#FF8A9D] transition hover:bg-[#E96B82] hover:text-white"
+                disabled={removingAll}
+                className="flex h-12 items-center gap-2 rounded-xl border border-[#E96B82]/30 bg-[#E96B82]/10 px-4 text-xs font-extrabold text-[#FF8A9D] transition hover:bg-[#E96B82] hover:text-white disabled:cursor-wait disabled:opacity-60 sm:h-14"
               >
                 <TrashIcon />
-                Remove All
+                {removingAll ? "Removing..." : "Remove All"}
               </button>
             )}
           </div>
         </section>
 
-        {/* Grid */}
         <section className="mt-5">
-          {loading ? (
-            <div className={GRID_CLASS}>
-              {Array.from({ length: 8 }, (_, i) => (
+          {error ? (
+            <div className="rounded-xl border border-[#F87171]/30 bg-[#7F1D1D]/15 p-5 text-sm text-[#FCA5A5]">
+              <p className="font-bold">Wishlist could not be loaded</p>
+              <p className="mt-1 text-xs">{error}</p>
+              <button
+                type="button"
+                onClick={() => void loadWishlist()}
+                className="mt-3 rounded-lg bg-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/15"
+              >
+                Try again
+              </button>
+            </div>
+          ) : loading ? (
+            <div className={GRID}>
+              {Array.from({ length: 6 }, (_, index) => (
                 <div
-                  key={i}
-                  className="h-[350px] animate-pulse rounded-xl bg-[#202A4F]"
+                  key={index}
+                  className="aspect-[2/1] animate-pulse rounded-xl bg-[#202A4F]"
                 />
               ))}
             </div>
           ) : filteredItems.length > 0 ? (
-            <div className={GRID_CLASS}>
-              {filteredItems.map((concert) => (
+            <div className={GRID}>
+              {filteredItems.map((concert, index) => (
                 <EventCard
                   key={concert.id}
                   concert={concert}
-                  index={filteredItems.indexOf(concert)}
+                  index={index}
                   onRemove={removeItem}
+                  removing={removingId === Number(concert.id)}
                 />
               ))}
             </div>
           ) : (
-            <EmptyWishlist hasItems={items.length > 0} />
+            <EmptyWishlist hasSavedItems={items.length > 0} />
           )}
         </section>
 
-        {/* Bottom banner */}
-        {!loading && items.length > 0 && (
-          <section className="mt-10 flex flex-col items-center justify-between gap-4 rounded-xl border border-white/10 bg-[#151B30] p-5 sm:flex-row">
+        {!loading && !error && items.length > 0 && (
+          <section className="mt-10 flex flex-col items-center justify-between gap-4 rounded-2xl border border-white/10 bg-[#151B30] p-5 sm:flex-row sm:p-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F5B84E]/10">
-                <span className="text-xl" aria-hidden="true">
-                  ✨
-                </span>
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F5B84E]/10">
+                <span className="text-xl" aria-hidden="true">✨</span>
               </div>
               <div>
-                <h3 className="text-xs font-extrabold text-white">
-                  Discover more concerts based on artists you follow
+                <h3 className="text-sm font-extrabold text-white">
+                  Discover more concerts
                 </h3>
-                <p className="mt-1 text-[10px] text-slate-400">
+                <p className="mt-1 text-xs text-slate-400">
                   Find your next unforgettable live music experience.
                 </p>
               </div>
             </div>
-
             <Link
               href="/customer/explore"
-              className="flex h-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-r from-[#8065E9] to-[#22D3E9] px-5 text-[10px] font-extrabold text-white transition hover:brightness-110"
+              className="flex h-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-[#8065E9] to-[#22D3E9] px-5 text-xs font-extrabold text-white transition hover:brightness-110"
             >
               EXPLORE CONCERTS
             </Link>
           </section>
         )}
       </main>
+
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 left-1/2 z-[100] -translate-x-1/2 rounded-xl border border-[#8B5CF6]/40 bg-[#151B30] px-5 py-3 text-sm font-semibold text-white shadow-2xl shadow-black/40"
+        >
+          {toast}
+        </div>
+      )}
     </CustomerShell>
   );
 }

@@ -1,59 +1,88 @@
-
 const db = require("../config/database");
 const fs = require("fs");
 const path = require("path");
 
-// =====================================================
-// HELPER
-// =====================================================
+// ======================================================
+// HELPERS
+// ======================================================
 
 function isValidId(value) {
-  return /^\d+$/.test(String(value));
+  return /^\d+$/.test(String(value ?? ""));
+}
+
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function parseDate(value) {
+  if (!value) return null;
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function getPosterUrl(file) {
   return file ? `/uploads/posters/${file.filename}` : null;
 }
 
-function deletePoster(posterUrl) {
-  if (!posterUrl) return;
+function deleteUploadedFile(req) {
+  if (req.file?.path && fs.existsSync(req.file.path)) {
+    fs.unlink(req.file.path, (error) => {
+      if (error) {
+        console.error("Delete uploaded file error:", error.message);
+      }
+    });
+  }
+}
 
+function deletePoster(posterUrl) {
+  if (!posterUrl || typeof posterUrl !== "string") return;
+
+  const filename = path.basename(posterUrl);
   const filePath = path.join(
     __dirname,
     "..",
-    posterUrl.replace(/^\/+/, "")
+    "uploads",
+    "posters",
+    filename
   );
 
   if (fs.existsSync(filePath)) {
     fs.unlink(filePath, (error) => {
-      if (error) console.error("Delete poster error:", error.message);
+      if (error) {
+        console.error("Delete poster error:", error.message);
+      }
     });
   }
 }
 
-function deleteUploadedFile(req) {
-  if (req.file) {
-    fs.unlink(req.file.path, (error) => {
-      if (error) console.error("Delete uploaded file error:", error.message);
-    });
+async function rollbackIfNeeded(connection, transactionStarted) {
+  if (connection && transactionStarted) {
+    await connection.rollback();
   }
 }
+
+// ======================================================
+// ARTISTS
+// ======================================================
 
 async function saveArtist(connection, eventId, artistName, artistCountry) {
-  if (!artistName || !artistName.trim()) return;
+  const name = cleanString(artistName);
 
-  const name = artistName.trim();
-  const country = artistCountry?.trim() || null;
+  if (!name) return;
 
-  const [existingArtists] = await connection.execute(
+  const country = cleanString(artistCountry) || null;
+
+  const [existing] = await connection.execute(
     "SELECT id FROM artists WHERE name = ? LIMIT 1",
     [name]
   );
 
   let artistId;
 
-  if (existingArtists.length > 0) {
-    artistId = existingArtists[0].id;
+  if (existing.length) {
+    artistId = existing[0].id;
 
     await connection.execute(
       `UPDATE artists
@@ -64,8 +93,7 @@ async function saveArtist(connection, eventId, artistName, artistCountry) {
     );
   } else {
     const [result] = await connection.execute(
-      `INSERT INTO artists (name, country)
-       VALUES (?, ?)`,
+      "INSERT INTO artists (name, country) VALUES (?, ?)",
       [name, country]
     );
 
@@ -73,8 +101,7 @@ async function saveArtist(connection, eventId, artistName, artistCountry) {
   }
 
   await connection.execute(
-    `INSERT INTO event_artists (event_id, artist_id)
-     VALUES (?, ?)`,
+    "INSERT INTO event_artists (event_id, artist_id) VALUES (?, ?)",
     [eventId, artistId]
   );
 }
@@ -88,8 +115,9 @@ async function attachArtists(events) {
          a.country,
          a.photo
        FROM event_artists ea
-       JOIN artists a ON ea.artist_id = a.id
-       WHERE ea.event_id = ?`,
+       JOIN artists a ON a.id = ea.artist_id
+       WHERE ea.event_id = ?
+       ORDER BY a.name ASC`,
       [event.id]
     );
 
@@ -99,16 +127,126 @@ async function attachArtists(events) {
   return events;
 }
 
+// ======================================================
+// TICKET AVAILABILITY
+// ======================================================
+
+async function attachTicketAvailability(events) {
+  for (const event of events) {
+    const [categories] = await db.execute(
+      `SELECT
+         tc.id,
+         tc.event_id,
+         tc.name,
+         tc.price,
+         tc.quota,
+         tc.benefit,
+         COALESCE(
+           SUM(
+             CASE
+               WHEN o.status = 'paid'
+                AND t.status IN ('valid', 'used')
+               THEN 1
+               ELSE 0
+             END
+           ),
+           0
+         ) AS sold
+       FROM ticket_categories tc
+       LEFT JOIN order_items oi
+         ON oi.ticket_category_id = tc.id
+       LEFT JOIN orders o
+         ON o.id = oi.order_id
+       LEFT JOIN tickets t
+         ON t.order_item_id = oi.id
+       WHERE tc.event_id = ?
+       GROUP BY
+         tc.id,
+         tc.event_id,
+         tc.name,
+         tc.price,
+         tc.quota,
+         tc.benefit
+       ORDER BY tc.price ASC`,
+      [event.id]
+    );
+
+    event.ticket_categories = categories.map((category) => {
+      const quota = Number(category.quota || 0);
+      const sold = Number(category.sold || 0);
+
+      return {
+        ...category,
+        price: Number(category.price || 0),
+        quota,
+        sold,
+        remaining: Math.max(quota - sold, 0),
+      };
+    });
+
+    event.total_quota = event.ticket_categories.reduce(
+      (sum, category) => sum + category.quota,
+      0
+    );
+
+    event.total_sold = event.ticket_categories.reduce(
+      (sum, category) => sum + category.sold,
+      0
+    );
+
+    event.remaining_tickets = Math.max(
+      event.total_quota - event.total_sold,
+      0
+    );
+
+    const now = new Date();
+
+    const eventEnd = parseDate(event.end_date);
+    const salesStart = parseDate(event.sales_start_at);
+    const salesEnd = parseDate(event.sales_end_at);
+
+    if (eventEnd && now > eventEnd) {
+      event.sales_status = "ended";
+    } else if (
+      event.total_quota > 0 &&
+      event.remaining_tickets === 0
+    ) {
+      event.sales_status = "sold_out";
+    } else if (!salesStart) {
+      event.sales_status = "not_available";
+    } else if (now < salesStart) {
+      event.sales_status = "coming_soon";
+    } else if (
+      now >= salesStart &&
+      (!salesEnd || now <= salesEnd)
+    ) {
+      event.sales_status = "on_sale";
+    } else {
+      event.sales_status = "not_available";
+    }
+  }
+
+  // Return harus di luar loop.
+  return events;
+}
+
+// ======================================================
+// STARTING PRICE
+// ======================================================
+
 async function attachStartingPrice(events) {
   for (const event of events) {
-    const [prices] = await db.execute(
+    const [rows] = await db.execute(
       `SELECT MIN(price) AS starting_price
        FROM ticket_categories
        WHERE event_id = ?`,
       [event.id]
     );
 
-    event.starting_price = prices[0]?.starting_price ?? null;
+    event.starting_price =
+      rows[0]?.starting_price == null
+        ? null
+        : Number(rows[0].starting_price);
   }
 
   return events;
@@ -117,17 +255,55 @@ async function attachStartingPrice(events) {
 async function attachEventDetails(events) {
   await attachArtists(events);
   await attachStartingPrice(events);
+  await attachTicketAvailability(events);
+
   return events;
 }
 
-// =====================================================
-// GET /api/events
-// CUSTOMER: DAFTAR KONSER
-// =====================================================
+// ======================================================
+// SALES DATE VALIDATION
+// ======================================================
+
+function validateSalesWindow(salesStartValue, salesEndValue) {
+  if (!salesStartValue && !salesEndValue) {
+    return {
+      valid: true,
+      salesStart: null,
+      salesEnd: null,
+    };
+  }
+
+  const salesStart = parseDate(salesStartValue);
+
+  const salesEnd = salesEndValue
+    ? parseDate(salesEndValue)
+    : null;
+
+  if (!salesStart || (salesEndValue && !salesEnd)) {
+    return { valid: false };
+  }
+
+  if (salesEnd && salesEnd <= salesStart) {
+    return { valid: false };
+  }
+
+  return {
+    valid: true,
+    salesStart: salesStartValue,
+    salesEnd: salesEndValue || null,
+  };
+}
+
+// ======================================================
+// CUSTOMER: GET ALL PUBLISHED EVENTS
+// ======================================================
 
 async function getEvents(req, res) {
   try {
-    const { search, category, location, date } = req.query;
+    const search = cleanString(req.query.search);
+    const category = cleanString(req.query.category);
+    const location = cleanString(req.query.location);
+    const date = cleanString(req.query.date);
 
     let sql = `
       SELECT
@@ -138,6 +314,10 @@ async function getEvents(req, res) {
         e.start_date,
         e.end_date,
         e.status,
+        e.approval_status,
+        e.publication_status,
+        e.sales_start_at,
+        e.sales_end_at,
 
         c.id AS category_id,
         c.name AS category_name,
@@ -153,31 +333,65 @@ async function getEvents(req, res) {
 
       FROM events e
 
-      JOIN categories c ON e.category_id = c.id
-      JOIN venues v ON e.venue_id = v.id
-      JOIN users u ON e.organizer_id = u.id
+      JOIN categories c
+        ON c.id = e.category_id
 
-      WHERE e.status = 'published'
+      JOIN venues v
+        ON v.id = e.venue_id
+
+      JOIN users u
+        ON u.id = e.organizer_id
+
+      WHERE e.approval_status = 'approved'
+        AND e.publication_status = 'published'
     `;
 
     const params = [];
 
     if (search) {
-      sql += " AND e.name LIKE ?";
-      params.push(`%${search.trim()}%`);
-    }
+  const keyword = `%${search}%`;
+
+  sql += `
+    AND (
+      e.name LIKE ?
+      OR e.description LIKE ?
+      OR c.name LIKE ?
+      OR v.name LIKE ?
+      OR v.address LIKE ?
+      OR EXISTS (
+        SELECT 1
+        FROM event_artists ea
+        JOIN artists a ON a.id = ea.artist_id
+        WHERE ea.event_id = e.id
+          AND a.name LIKE ?
+      )
+    )
+  `;
+
+  params.push(
+    keyword,
+    keyword,
+    keyword,
+    keyword,
+    keyword,
+    keyword
+  );
+}
 
     if (category) {
       sql += " AND c.name = ?";
-      params.push(category.trim());
+      params.push(category);
     }
 
     if (location) {
-      sql += " AND (v.name LIKE ? OR v.address LIKE ?)";
-      params.push(
-        `%${location.trim()}%`,
-        `%${location.trim()}%`
-      );
+      sql += `
+        AND (
+          v.name LIKE ?
+          OR v.address LIKE ?
+        )
+      `;
+
+      params.push(`%${location}%`, `%${location}%`);
     }
 
     if (date) {
@@ -203,7 +417,7 @@ async function getEvents(req, res) {
       events,
     });
   } catch (error) {
-    console.error("Get events error:", error.message);
+    console.error("Get events error:", error);
 
     return res.status(500).json({
       message: "Gagal mengambil daftar konser",
@@ -211,10 +425,9 @@ async function getEvents(req, res) {
   }
 }
 
-// =====================================================
-// GET /api/events/:id
-// CUSTOMER: DETAIL KONSER
-// =====================================================
+// ======================================================
+// CUSTOMER: GET EVENT DETAIL
+// ======================================================
 
 async function getEventById(req, res) {
   try {
@@ -235,6 +448,10 @@ async function getEventById(req, res) {
          e.start_date,
          e.end_date,
          e.status,
+         e.approval_status,
+         e.publication_status,
+         e.sales_start_at,
+         e.sales_end_at,
 
          c.id AS category_id,
          c.name AS category_name,
@@ -249,61 +466,36 @@ async function getEventById(req, res) {
          u.name AS organizer_name
 
        FROM events e
-       JOIN categories c ON e.category_id = c.id
-       JOIN venues v ON e.venue_id = v.id
-       JOIN users u ON e.organizer_id = u.id
 
-       WHERE e.id = ? AND e.status = 'published'`,
+       JOIN categories c
+         ON c.id = e.category_id
+
+       JOIN venues v
+         ON v.id = e.venue_id
+
+       JOIN users u
+         ON u.id = e.organizer_id
+
+       WHERE e.id = ?
+         AND e.approval_status = 'approved'
+         AND e.publication_status = 'published'`,
       [id]
     );
 
-    if (events.length === 0) {
+    if (!events.length) {
       return res.status(404).json({
         message: "Konser tidak ditemukan",
       });
     }
 
-    const event = events[0];
-
-    const [artists] = await db.execute(
-      `SELECT
-         a.id,
-         a.name,
-         a.country,
-         a.photo
-       FROM event_artists ea
-       JOIN artists a ON ea.artist_id = a.id
-       WHERE ea.event_id = ?`,
-      [id]
-    );
-
-    const [ticketCategories] = await db.execute(
-      `SELECT
-         id,
-         name,
-         price,
-         quota,
-         benefit
-       FROM ticket_categories
-       WHERE event_id = ?
-       ORDER BY price ASC`,
-      [id]
-    );
+    await attachEventDetails(events);
 
     return res.json({
       message: "Detail konser berhasil diambil",
-      event: {
-        ...event,
-        artists,
-        ticket_categories: ticketCategories,
-        starting_price:
-          ticketCategories.length > 0
-            ? ticketCategories[0].price
-            : null,
-      },
+      event: events[0],
     });
   } catch (error) {
-    console.error("Get event detail error:", error.message);
+    console.error("Get event detail error:", error);
 
     return res.status(500).json({
       message: "Gagal mengambil detail konser",
@@ -311,10 +503,9 @@ async function getEventById(req, res) {
   }
 }
 
-// =====================================================
-// GET /api/events/my-events
-// ORGANIZER: KONSER MILIK SENDIRI
-// =====================================================
+// ======================================================
+// ORGANIZER: GET MY EVENTS
+// ======================================================
 
 async function getMyEvents(req, res) {
   try {
@@ -327,8 +518,13 @@ async function getMyEvents(req, res) {
          e.start_date,
          e.end_date,
          e.status,
+         e.approval_status,
+         e.publication_status,
+         e.sales_start_at,
+         e.sales_end_at,
          e.rejection_reason,
          e.created_at,
+         e.updated_at,
 
          c.id AS category_id,
          c.name AS category_name,
@@ -340,10 +536,15 @@ async function getMyEvents(req, res) {
          v.longitude
 
        FROM events e
-       JOIN categories c ON e.category_id = c.id
-       JOIN venues v ON e.venue_id = v.id
+
+       JOIN categories c
+         ON c.id = e.category_id
+
+       JOIN venues v
+         ON v.id = e.venue_id
 
        WHERE e.organizer_id = ?
+
        ORDER BY e.created_at DESC`,
       [req.user.id]
     );
@@ -356,18 +557,16 @@ async function getMyEvents(req, res) {
       events,
     });
   } catch (error) {
-    console.error("Get organizer events error:", error.message);
+    console.error("Get organizer events error:", error);
 
     return res.status(500).json({
       message: "Gagal mengambil daftar konser",
     });
   }
 }
-
-// =====================================================
-// POST /api/events
-// ORGANIZER: TAMBAH KONSER
-// =====================================================
+// ======================================================
+// ORGANIZER: CREATE EVENT
+// ======================================================
 
 async function createEvent(req, res) {
   let connection;
@@ -383,11 +582,13 @@ async function createEvent(req, res) {
       end_date,
       artist_name,
       artist_country,
+      sales_start_at,
+      sales_end_at,
     } = req.body;
 
     if (
-      !name?.trim() ||
-      !description?.trim() ||
+      !cleanString(name) ||
+      !cleanString(description) ||
       !category_id ||
       !venue_id ||
       !start_date ||
@@ -396,14 +597,12 @@ async function createEvent(req, res) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
-        message: "Semua data konser wajib diisi",
+        message:
+          "Nama, deskripsi, kategori, venue, tanggal mulai, dan tanggal selesai wajib diisi",
       });
     }
 
-    if (
-      !isValidId(category_id) ||
-      !isValidId(venue_id)
-    ) {
+    if (!isValidId(category_id) || !isValidId(venue_id)) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
@@ -411,14 +610,10 @@ async function createEvent(req, res) {
       });
     }
 
-    const startDate = new Date(start_date);
-    const endDate = new Date(end_date);
+    const startDate = parseDate(start_date);
+    const endDate = parseDate(end_date);
 
-    if (
-      Number.isNaN(startDate.getTime()) ||
-      Number.isNaN(endDate.getTime()) ||
-      endDate <= startDate
-    ) {
+    if (!startDate || !endDate || endDate <= startDate) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
@@ -426,7 +621,21 @@ async function createEvent(req, res) {
       });
     }
 
+    const salesWindow = validateSalesWindow(
+      sales_start_at,
+      sales_end_at
+    );
+
+    if (!salesWindow.valid) {
+      deleteUploadedFile(req);
+
+      return res.status(400).json({
+        message: "Jadwal penjualan tiket tidak valid",
+      });
+    }
+
     connection = await db.getConnection();
+
     await connection.beginTransaction();
     transactionStarted = true;
 
@@ -435,28 +644,19 @@ async function createEvent(req, res) {
       [category_id]
     );
 
-    if (categories.length === 0) {
-      await connection.rollback();
-      transactionStarted = false;
-      deleteUploadedFile(req);
-
-      return res.status(400).json({
-        message: "Kategori konser tidak ditemukan",
-      });
-    }
-
     const [venues] = await connection.execute(
       "SELECT id FROM venues WHERE id = ?",
       [venue_id]
     );
 
-    if (venues.length === 0) {
-      await connection.rollback();
+    if (!categories.length || !venues.length) {
+      await rollbackIfNeeded(connection, transactionStarted);
       transactionStarted = false;
+
       deleteUploadedFile(req);
 
       return res.status(400).json({
-        message: "Venue tidak ditemukan",
+        message: "Kategori konser atau venue tidak ditemukan",
       });
     }
 
@@ -464,29 +664,40 @@ async function createEvent(req, res) {
 
     const [result] = await connection.execute(
       `INSERT INTO events (
-         organizer_id,
-         category_id,
-         venue_id,
-         name,
-         description,
-         poster_url,
-         start_date,
-         end_date,
-         status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [
-        req.user.id,
+        organizer_id,
         category_id,
         venue_id,
-        name.trim(),
-        description.trim(),
+        name,
+        description,
+        poster_url,
+        start_date,
+        end_date,
+        sales_start_at,
+        sales_end_at,
+        status,
+        approval_status,
+        publication_status
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        'pending',
+        'pending',
+        'draft'
+      )`,
+      [
+        req.user.id,
+        Number(category_id),
+        Number(venue_id),
+        cleanString(name),
+        cleanString(description),
         posterUrl,
         start_date,
         end_date,
+        salesWindow.salesStart,
+        salesWindow.salesEnd,
       ]
     );
 
-    if (artist_name?.trim()) {
+    if (cleanString(artist_name)) {
       await saveArtist(
         connection,
         result.insertId,
@@ -501,29 +712,30 @@ async function createEvent(req, res) {
     return res.status(201).json({
       message:
         "Konser berhasil dibuat dan menunggu persetujuan Super Admin",
+
       event: {
         id: result.insertId,
         organizer_id: req.user.id,
-        name: name.trim(),
-        description: description.trim(),
+        name: cleanString(name),
+        description: cleanString(description),
         poster_url: posterUrl,
         category_id: Number(category_id),
         venue_id: Number(venue_id),
         start_date,
         end_date,
-        artist_name: artist_name?.trim() || null,
-        artist_country: artist_country?.trim() || null,
+        sales_start_at: salesWindow.salesStart,
+        sales_end_at: salesWindow.salesEnd,
+        approval_status: "pending",
+        publication_status: "draft",
         status: "pending",
       },
     });
   } catch (error) {
-    if (transactionStarted && connection) {
-      await connection.rollback();
-    }
+    await rollbackIfNeeded(connection, transactionStarted);
 
     deleteUploadedFile(req);
 
-    console.error("Create event error:", error.message);
+    console.error("Create event error:", error);
 
     return res.status(500).json({
       message: "Gagal membuat konser",
@@ -533,10 +745,9 @@ async function createEvent(req, res) {
   }
 }
 
-// =====================================================
-// PUT /api/events/:id
-// ORGANIZER: EDIT KONSER
-// =====================================================
+// ======================================================
+// ORGANIZER: UPDATE EVENT
+// ======================================================
 
 async function updateEvent(req, res) {
   let connection;
@@ -554,6 +765,8 @@ async function updateEvent(req, res) {
       end_date,
       artist_name,
       artist_country,
+      sales_start_at,
+      sales_end_at,
     } = req.body;
 
     if (!isValidId(id)) {
@@ -565,8 +778,8 @@ async function updateEvent(req, res) {
     }
 
     if (
-      !name?.trim() ||
-      !description?.trim() ||
+      !cleanString(name) ||
+      !cleanString(description) ||
       !category_id ||
       !venue_id ||
       !start_date ||
@@ -575,14 +788,12 @@ async function updateEvent(req, res) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
-        message: "Semua data konser wajib diisi",
+        message:
+          "Nama, deskripsi, kategori, venue, tanggal mulai, dan tanggal selesai wajib diisi",
       });
     }
 
-    if (
-      !isValidId(category_id) ||
-      !isValidId(venue_id)
-    ) {
+    if (!isValidId(category_id) || !isValidId(venue_id)) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
@@ -590,14 +801,10 @@ async function updateEvent(req, res) {
       });
     }
 
-    const startDate = new Date(start_date);
-    const endDate = new Date(end_date);
+    const startDate = parseDate(start_date);
+    const endDate = parseDate(end_date);
 
-    if (
-      Number.isNaN(startDate.getTime()) ||
-      Number.isNaN(endDate.getTime()) ||
-      endDate <= startDate
-    ) {
+    if (!startDate || !endDate || endDate <= startDate) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
@@ -605,20 +812,41 @@ async function updateEvent(req, res) {
       });
     }
 
+    const salesWindow = validateSalesWindow(
+      sales_start_at,
+      sales_end_at
+    );
+
+    if (!salesWindow.valid) {
+      deleteUploadedFile(req);
+
+      return res.status(400).json({
+        message: "Jadwal penjualan tiket tidak valid",
+      });
+    }
+
     connection = await db.getConnection();
+
     await connection.beginTransaction();
     transactionStarted = true;
 
     const [events] = await connection.execute(
-      `SELECT id, status, poster_url
+      `SELECT
+        id,
+        status,
+        approval_status,
+        poster_url
        FROM events
-       WHERE id = ? AND organizer_id = ?`,
+       WHERE id = ?
+         AND organizer_id = ?
+       FOR UPDATE`,
       [id, req.user.id]
     );
 
-    if (events.length === 0) {
-      await connection.rollback();
+    if (!events.length) {
+      await rollbackIfNeeded(connection, transactionStarted);
       transactionStarted = false;
+
       deleteUploadedFile(req);
 
       return res.status(404).json({
@@ -626,14 +854,22 @@ async function updateEvent(req, res) {
       });
     }
 
-    if (!["pending", "rejected"].includes(events[0].status)) {
-      await connection.rollback();
+    const currentApproval =
+      events[0].approval_status || events[0].status;
+
+    if (
+      !["pending", "rejected", "revision_required"].includes(
+        currentApproval
+      )
+    ) {
+      await rollbackIfNeeded(connection, transactionStarted);
       transactionStarted = false;
+
       deleteUploadedFile(req);
 
       return res.status(400).json({
         message:
-          "Konser hanya dapat diedit jika berstatus pending atau rejected",
+          "Konser hanya dapat diedit jika berstatus pending, rejected, atau revision_required",
       });
     }
 
@@ -648,8 +884,9 @@ async function updateEvent(req, res) {
     );
 
     if (!categories.length || !venues.length) {
-      await connection.rollback();
+      await rollbackIfNeeded(connection, transactionStarted);
       transactionStarted = false;
+
       deleteUploadedFile(req);
 
       return res.status(400).json({
@@ -658,46 +895,54 @@ async function updateEvent(req, res) {
     }
 
     const oldPoster = events[0].poster_url;
+
     const newPoster = req.file
       ? getPosterUrl(req.file)
       : oldPoster;
 
     await connection.execute(
       `UPDATE events
-       SET name = ?,
-           description = ?,
-           category_id = ?,
-           venue_id = ?,
-           poster_url = ?,
-           start_date = ?,
-           end_date = ?,
-           status = 'pending',
-           rejection_reason = NULL,
-           approved_by = NULL,
-           approved_at = NULL,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND organizer_id = ?`,
+       SET
+         name = ?,
+         description = ?,
+         category_id = ?,
+         venue_id = ?,
+         poster_url = ?,
+         start_date = ?,
+         end_date = ?,
+         sales_start_at = ?,
+         sales_end_at = ?,
+         status = 'pending',
+         approval_status = 'pending',
+         publication_status = 'draft',
+         rejection_reason = NULL,
+         approved_by = NULL,
+         approved_at = NULL,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND organizer_id = ?`,
       [
-        name.trim(),
-        description.trim(),
-        category_id,
-        venue_id,
+        cleanString(name),
+        cleanString(description),
+        Number(category_id),
+        Number(venue_id),
         newPoster,
         start_date,
         end_date,
+        salesWindow.salesStart,
+        salesWindow.salesEnd,
         id,
         req.user.id,
       ]
     );
 
-    // Jika data artis dikirim, perbarui relasi artis.
     if (artist_name !== undefined) {
       await connection.execute(
         "DELETE FROM event_artists WHERE event_id = ?",
         [id]
       );
 
-      if (artist_name.trim()) {
+      if (cleanString(artist_name)) {
         await saveArtist(
           connection,
           id,
@@ -715,19 +960,23 @@ async function updateEvent(req, res) {
     }
 
     return res.json({
-      message: "Konser berhasil diperbarui dan menunggu persetujuan",
+      message:
+        "Konser berhasil diperbarui dan dikirim ulang untuk persetujuan",
+
       event_id: Number(id),
       poster_url: newPoster,
       status: "pending",
+      approval_status: "pending",
+      publication_status: "draft",
+      sales_start_at: salesWindow.salesStart,
+      sales_end_at: salesWindow.salesEnd,
     });
   } catch (error) {
-    if (transactionStarted && connection) {
-      await connection.rollback();
-    }
+    await rollbackIfNeeded(connection, transactionStarted);
 
     deleteUploadedFile(req);
 
-    console.error("Update event error:", error.message);
+    console.error("Update event error:", error);
 
     return res.status(500).json({
       message: "Gagal memperbarui konser",
@@ -737,12 +986,13 @@ async function updateEvent(req, res) {
   }
 }
 
-// =====================================================
-// DELETE /api/events/:id
-// ORGANIZER: HAPUS KONSER
-// =====================================================
+// ======================================================
+// ORGANIZER: DELETE EVENT
+// ======================================================
 
 async function deleteEvent(req, res) {
+  let connection;
+
   try {
     const { id } = req.params;
 
@@ -752,36 +1002,60 @@ async function deleteEvent(req, res) {
       });
     }
 
-    const [events] = await db.execute(
-      `SELECT id, status, poster_url
+    connection = await db.getConnection();
+
+    await connection.beginTransaction();
+
+    const [events] = await connection.execute(
+      `SELECT
+        id,
+        status,
+        approval_status,
+        poster_url
        FROM events
-       WHERE id = ? AND organizer_id = ?`,
+       WHERE id = ?
+         AND organizer_id = ?
+       FOR UPDATE`,
       [id, req.user.id]
     );
 
-    if (events.length === 0) {
+    if (!events.length) {
+      await connection.rollback();
+
       return res.status(404).json({
         message: "Konser tidak ditemukan atau bukan milik kamu",
       });
     }
 
-    if (!["pending", "rejected"].includes(events[0].status)) {
+    const currentApproval =
+      events[0].approval_status || events[0].status;
+
+    if (
+      !["pending", "rejected", "revision_required"].includes(
+        currentApproval
+      )
+    ) {
+      await connection.rollback();
+
       return res.status(400).json({
         message:
-          "Konser hanya dapat dihapus jika berstatus pending atau rejected",
+          "Konser hanya dapat dihapus jika berstatus pending, rejected, atau revision_required",
       });
     }
 
-    await db.execute(
+    await connection.execute(
       "DELETE FROM event_artists WHERE event_id = ?",
       [id]
     );
 
-    await db.execute(
+    await connection.execute(
       `DELETE FROM events
-       WHERE id = ? AND organizer_id = ?`,
+       WHERE id = ?
+         AND organizer_id = ?`,
       [id, req.user.id]
     );
+
+    await connection.commit();
 
     deletePoster(events[0].poster_url);
 
@@ -790,9 +1064,16 @@ async function deleteEvent(req, res) {
       event_id: Number(id),
     });
   } catch (error) {
-    console.error("Delete event error:", error.message);
+    if (connection) {
+      await connection.rollback();
+    }
 
-    if (error.code === "ER_ROW_IS_REFERENCED_2") {
+    console.error("Delete event error:", error);
+
+    if (
+      error.code === "ER_ROW_IS_REFERENCED_2" ||
+      error.code === "ER_ROW_IS_REFERENCED"
+    ) {
       return res.status(409).json({
         message:
           "Konser tidak dapat dihapus karena sudah memiliki data tiket atau transaksi",
@@ -802,13 +1083,14 @@ async function deleteEvent(req, res) {
     return res.status(500).json({
       message: "Gagal menghapus konser",
     });
+  } finally {
+    if (connection) connection.release();
   }
 }
 
-// =====================================================
-// GET /api/events/pending
-// SUPER ADMIN: DAFTAR KONSER MENUNGGU PERSETUJUAN
-// =====================================================
+// ======================================================
+// SUPER ADMIN: GET PENDING EVENTS
+// ======================================================
 
 async function getPendingEvents(req, res) {
   try {
@@ -821,33 +1103,52 @@ async function getPendingEvents(req, res) {
          e.start_date,
          e.end_date,
          e.status,
+         e.approval_status,
+         e.publication_status,
+         e.sales_start_at,
+         e.sales_end_at,
          e.created_at,
+         e.rejection_reason,
 
+         c.id AS category_id,
          c.name AS category_name,
 
+         v.id AS venue_id,
          v.name AS venue_name,
          v.address AS venue_address,
 
+         u.id AS organizer_id,
          u.name AS organizer_name
 
        FROM events e
-       JOIN categories c ON e.category_id = c.id
-       JOIN venues v ON e.venue_id = v.id
-       JOIN users u ON e.organizer_id = u.id
 
-       WHERE e.status = 'pending'
+       JOIN categories c
+         ON c.id = e.category_id
+
+       JOIN venues v
+         ON v.id = e.venue_id
+
+       JOIN users u
+         ON u.id = e.organizer_id
+
+       WHERE e.approval_status IN (
+         'pending',
+         'revision_required'
+       )
+
        ORDER BY e.created_at ASC`
     );
 
     await attachEventDetails(events);
 
     return res.json({
-      message: "Daftar konser pending berhasil diambil",
+      message:
+        "Daftar konser yang membutuhkan pemeriksaan berhasil diambil",
       total: events.length,
       events,
     });
   } catch (error) {
-    console.error("Get pending events error:", error.message);
+    console.error("Get pending events error:", error);
 
     return res.status(500).json({
       message: "Gagal mengambil daftar konser pending",
@@ -855,10 +1156,9 @@ async function getPendingEvents(req, res) {
   }
 }
 
-// =====================================================
-// PATCH /api/events/:id/approve
-// SUPER ADMIN: SETUJUI KONSER
-// =====================================================
+// ======================================================
+// SUPER ADMIN: APPROVE EVENT
+// ======================================================
 
 async function approveEvent(req, res) {
   try {
@@ -871,39 +1171,58 @@ async function approveEvent(req, res) {
     }
 
     const [events] = await db.execute(
-      "SELECT id, status FROM events WHERE id = ?",
+      `SELECT
+        id,
+        approval_status,
+        status
+       FROM events
+       WHERE id = ?`,
       [id]
     );
 
-    if (events.length === 0) {
+    if (!events.length) {
       return res.status(404).json({
         message: "Konser tidak ditemukan",
       });
     }
 
-    if (events[0].status !== "pending") {
+    const currentApproval =
+      events[0].approval_status || events[0].status;
+
+    if (
+      !["pending", "revision_required"].includes(currentApproval)
+    ) {
       return res.status(400).json({
-        message: "Hanya konser berstatus pending yang dapat disetujui",
+        message:
+          "Hanya konser pending atau revision_required yang dapat disetujui",
       });
     }
 
     await db.execute(
       `UPDATE events
-       SET status = 'published',
-           approved_by = ?,
-           approved_at = NOW(),
-           rejection_reason = NULL
+       SET
+         status = 'published',
+         approval_status = 'approved',
+         publication_status = 'draft',
+         approved_by = ?,
+         approved_at = CURRENT_TIMESTAMP,
+         rejection_reason = NULL,
+         updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [req.user.id, id]
     );
 
     return res.json({
-      message: "Konser berhasil disetujui dan dipublikasikan",
+      message:
+        "Konser disetujui. Event Organizer dapat memublikasikannya setelah melengkapi kategori tiket dan jadwal penjualan.",
+
       event_id: Number(id),
       status: "published",
+      approval_status: "approved",
+      publication_status: "draft",
     });
   } catch (error) {
-    console.error("Approve event error:", error.message);
+    console.error("Approve event error:", error);
 
     return res.status(500).json({
       message: "Gagal menyetujui konser",
@@ -911,15 +1230,17 @@ async function approveEvent(req, res) {
   }
 }
 
-// =====================================================
-// PATCH /api/events/:id/reject
-// SUPER ADMIN: TOLAK KONSER
-// =====================================================
+// ======================================================
+// SUPER ADMIN: REJECT EVENT
+// ======================================================
 
 async function rejectEvent(req, res) {
   try {
     const { id } = req.params;
-    const { rejection_reason } = req.body;
+
+    const rejectionReason = cleanString(
+      req.body?.rejection_reason
+    );
 
     if (!isValidId(id)) {
       return res.status(400).json({
@@ -927,50 +1248,64 @@ async function rejectEvent(req, res) {
       });
     }
 
-    if (
-      typeof rejection_reason !== "string" ||
-      !rejection_reason.trim()
-    ) {
+    if (!rejectionReason) {
       return res.status(400).json({
         message: "Alasan penolakan wajib diisi",
       });
     }
 
     const [events] = await db.execute(
-      "SELECT id, status FROM events WHERE id = ?",
+      `SELECT
+        id,
+        approval_status,
+        status
+       FROM events
+       WHERE id = ?`,
       [id]
     );
 
-    if (events.length === 0) {
+    if (!events.length) {
       return res.status(404).json({
         message: "Konser tidak ditemukan",
       });
     }
 
-    if (events[0].status !== "pending") {
+    const currentApproval =
+      events[0].approval_status || events[0].status;
+
+    if (
+      !["pending", "revision_required"].includes(currentApproval)
+    ) {
       return res.status(400).json({
-        message: "Hanya konser berstatus pending yang dapat ditolak",
+        message:
+          "Hanya konser pending atau revision_required yang dapat ditolak",
       });
     }
 
     await db.execute(
       `UPDATE events
-       SET status = 'rejected',
-           rejection_reason = ?,
-           approved_by = NULL,
-           approved_at = NULL
+       SET
+         status = 'rejected',
+         approval_status = 'rejected',
+         publication_status = 'draft',
+         rejection_reason = ?,
+         approved_by = NULL,
+         approved_at = NULL,
+         updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [rejection_reason.trim(), id]
+      [rejectionReason, id]
     );
 
     return res.json({
       message: "Konser berhasil ditolak",
       event_id: Number(id),
       status: "rejected",
-      rejection_reason: rejection_reason.trim(),
+      approval_status: "rejected",
+      publication_status: "draft",
+      rejection_reason: rejectionReason,
     });
   } catch (error) {
-    console.error("Reject event error:", error.message);
+    console.error("Reject event error:", error);
 
     return res.status(500).json({
       message: "Gagal menolak konser",
@@ -978,9 +1313,187 @@ async function rejectEvent(req, res) {
   }
 }
 
-// =====================================================
+// ======================================================
+// ORGANIZER: PUBLISH EVENT
+// ======================================================
+
+async function publishEvent(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!isValidId(id)) {
+      return res.status(400).json({
+        message: "ID konser tidak valid",
+      });
+    }
+
+    const [events] = await db.execute(
+      `SELECT
+         id,
+         approval_status,
+         publication_status,
+         sales_start_at,
+         sales_end_at,
+         end_date
+       FROM events
+       WHERE id = ?
+         AND organizer_id = ?`,
+      [id, req.user.id]
+    );
+
+    if (!events.length) {
+      return res.status(404).json({
+        message: "Konser tidak ditemukan atau bukan milik kamu",
+      });
+    }
+
+    const event = events[0];
+
+    if (event.approval_status !== "approved") {
+      return res.status(400).json({
+        message:
+          "Konser harus disetujui Super Admin sebelum dipublikasikan",
+      });
+    }
+
+    if (event.publication_status === "published") {
+      return res.status(409).json({
+        message: "Konser sudah dipublikasikan",
+      });
+    }
+
+    const salesStart = parseDate(event.sales_start_at);
+
+    const salesEnd = event.sales_end_at
+      ? parseDate(event.sales_end_at)
+      : null;
+
+    if (
+      !salesStart ||
+      (event.sales_end_at && !salesEnd) ||
+      (salesEnd && salesEnd <= salesStart)
+    ) {
+      return res.status(400).json({
+        message:
+          "Atur jadwal mulai dan selesai penjualan tiket sebelum memublikasikan konser",
+      });
+    }
+
+    const eventEnd = parseDate(event.end_date);
+
+    if (!eventEnd || eventEnd <= new Date()) {
+      return res.status(400).json({
+        message:
+          "Konser yang sudah berakhir tidak dapat dipublikasikan",
+      });
+    }
+
+    const [ticketCategories] = await db.execute(
+      `SELECT id
+       FROM ticket_categories
+       WHERE event_id = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    if (!ticketCategories.length) {
+      return res.status(400).json({
+        message:
+          "Tambahkan minimal satu kategori tiket sebelum memublikasikan konser",
+      });
+    }
+
+    await db.execute(
+      `UPDATE events
+       SET
+         publication_status = 'published',
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND organizer_id = ?
+         AND approval_status = 'approved'`,
+      [id, req.user.id]
+    );
+
+    return res.json({
+      message: "Konser berhasil dipublikasikan",
+      event_id: Number(id),
+      approval_status: "approved",
+      publication_status: "published",
+    });
+  } catch (error) {
+    console.error("Publish event error:", error);
+
+    return res.status(500).json({
+      message: "Gagal memublikasikan konser",
+    });
+  }
+}
+
+// ======================================================
+// ORGANIZER: UNPUBLISH EVENT
+// ======================================================
+
+async function unpublishEvent(req, res) {
+  try {
+    const { id } = req.params;
+
+    if (!isValidId(id)) {
+      return res.status(400).json({
+        message: "ID konser tidak valid",
+      });
+    }
+
+    const [result] = await db.execute(
+      `UPDATE events
+       SET
+         publication_status = 'unpublished',
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND organizer_id = ?
+         AND approval_status = 'approved'
+         AND publication_status = 'published'`,
+      [id, req.user.id]
+    );
+
+    if (!result.affectedRows) {
+      const [events] = await db.execute(
+        `SELECT id
+         FROM events
+         WHERE id = ?
+           AND organizer_id = ?`,
+        [id, req.user.id]
+      );
+
+      if (!events.length) {
+        return res.status(404).json({
+          message: "Konser tidak ditemukan atau bukan milik kamu",
+        });
+      }
+
+      return res.status(400).json({
+        message:
+          "Hanya konser yang sudah dipublikasikan dan disetujui yang dapat dibatalkan publikasinya",
+      });
+    }
+
+    return res.json({
+      message: "Publikasi konser berhasil dibatalkan",
+      event_id: Number(id),
+      approval_status: "approved",
+      publication_status: "unpublished",
+    });
+  } catch (error) {
+    console.error("Unpublish event error:", error);
+
+    return res.status(500).json({
+      message: "Gagal membatalkan publikasi konser",
+    });
+  }
+}
+
+// ======================================================
 // EXPORT
-// =====================================================
+// ======================================================
 
 module.exports = {
   getEvents,
@@ -992,4 +1505,6 @@ module.exports = {
   getPendingEvents,
   approveEvent,
   rejectEvent,
+  publishEvent,
+  unpublishEvent,
 };

@@ -1,286 +1,99 @@
-import {
-  API_URL,
-  demoConcerts,
-  type Concert,
-} from "./customer";
+import { API_URL, imageUrl, type Concert } from "./customer";
 
-type ApiArtist = {
-  name?: string | null;
-  country?: string | null;
+type ApiEvent = Record<string, unknown> & {
+  id: number | string;
+  name: string;
+  start_date: string;
+  end_date: string;
 };
 
-type ApiEvent = {
-  id?: number | string;
-
-  name?: string | null;
-  description?: string | null;
-
-  poster_url?: string | null;
-
-  starting_price?: number | string | null;
-  price?: number | string | null;
-
-  category_id?: number | string | null;
-  category_name?: string | null;
-  category?: {
-    id?: number | string;
-    name?: string | null;
-  } | null;
-
-  venue_id?: number | string | null;
-  venue_name?: string | null;
-  venue_address?: string | null;
-
-  venue?: {
-    id?: number | string;
-    name?: string | null;
-    address?: string | null;
-    city?: string | null;
-  } | null;
-
-  start_date?: string | null;
-  end_date?: string | null;
-
-  status?: string | null;
-
-  artist?: string | null;
-
-  artists?: ApiArtist[] | null;
-
-  organizer_name?: string | null;
-
-  organizer?: {
-    name?: string | null;
-  } | null;
+type EventsResponse = {
+  message?: string;
+  total?: number;
+  events?: ApiEvent[];
 };
 
-function toNumber(
-  value: unknown
-): number | undefined {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
-    return undefined;
-  }
-
+function numeric(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
   const parsed = Number(value);
-
-  return Number.isFinite(parsed)
-    ? parsed
-    : undefined;
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function toIsoDate(
-  value?: string | null,
-  fallback?: string | null
-): string {
-  const candidate = value || fallback;
-
-  if (candidate) {
-    const parsed = new Date(candidate);
-
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString();
-    }
-  }
-
-  return new Date().toISOString();
-}
-
-export function normalizeEvent(
-  event: ApiEvent,
-  index = 0
-): Concert {
-  const fallback =
-    demoConcerts[index % demoConcerts.length];
-
-  const startDate = toIsoDate(
-    event.start_date,
-    fallback?.start_date
-  );
-
-  const endDate = toIsoDate(
-    event.end_date,
-    startDate
-  );
-
-  const artistNames =
-    event.artists
-      ?.map((artist) => artist.name)
-      .filter(
-        (name): name is string =>
-          Boolean(name)
-      )
-      .join(", ");
-
-  const firstArtist = event.artists?.[0];
+function normalizeEvent(event: ApiEvent): Concert {
+  const artists = Array.isArray(event.artists) ? event.artists : [];
+  const poster = typeof event.poster_url === "string" && event.poster_url
+    ? imageUrl(event.poster_url)
+    : null;
 
   return {
-    id: Number(event.id) || index + 1,
-
-    name:
-      event.name ||
-      fallback?.name ||
-      "Untitled Concert",
-
-    description:
-      event.description ??
-      fallback?.description ??
-      null,
-
-    poster_url:
-      event.poster_url ||
-      fallback?.poster_url ||
-      null,
-
-    start_date: startDate,
-
-    end_date: endDate,
-
-    status:
-      event.status ||
-      fallback?.status,
-
-    category_id:
-      toNumber(
-        event.category_id ??
-        event.category?.id
-      ) ??
-      fallback?.category_id,
-
-    category_name:
-      event.category_name ||
-      event.category?.name ||
-      fallback?.category_name,
-
-    venue_id:
-      toNumber(
-        event.venue_id ??
-        event.venue?.id
-      ) ??
-      fallback?.venue_id,
-
-    venue_name:
-      event.venue_name ||
-      event.venue?.name ||
-      fallback?.venue_name,
-
-    venue_address:
-      event.venue_address ||
-      event.venue?.address ||
-      event.venue?.city ||
-      fallback?.venue_address,
-
-    price:
-      toNumber(event.starting_price) ??
-      toNumber(event.price) ??
-      fallback?.price,
-
-    artist:
-      event.artist ||
-      artistNames ||
-      fallback?.artist,
-
-    artist_country:
-      firstArtist?.country ||
-      fallback?.artist_country,
-
-    organizer_name:
-      event.organizer_name ||
-      event.organizer?.name ||
-      fallback?.organizer_name,
-  };
+    ...event,
+    id: Number(event.id),
+    name: String(event.name || "Untitled event"),
+    description: typeof event.description === "string" ? event.description : null,
+    poster_url: poster,
+    start_date: String(event.start_date),
+    end_date: String(event.end_date),
+    category_id: numeric(event.category_id),
+    category_name: typeof event.category_name === "string" ? event.category_name : undefined,
+    venue_id: numeric(event.venue_id),
+    venue_name: typeof event.venue_name === "string" ? event.venue_name : undefined,
+    venue_address: typeof event.venue_address === "string" ? event.venue_address : undefined,
+    organizer_id: numeric(event.organizer_id),
+    organizer_name: typeof event.organizer_name === "string" ? event.organizer_name : undefined,
+    price: numeric(event.starting_price) ?? numeric(event.price),
+    sales_status: typeof event.sales_status === "string" ? event.sales_status : undefined,
+    remaining_tickets: numeric(event.remaining_tickets),
+    total_quota: numeric(event.total_quota),
+    total_sold: numeric(event.total_sold),
+    ticket_categories: Array.isArray(event.ticket_categories) ? event.ticket_categories : [],
+    artists,
+    artist: artists.map((artist: { name?: string }) => artist.name).filter(Boolean).join(", "),
+    artist_country: artists.map((artist: { country?: string }) => artist.country).filter(Boolean).join(", "),
+  } as Concert;
 }
 
+/** Loads only real, publicly listed events from GET /api/events. */
 export async function fetchConcerts(): Promise<Concert[]> {
-  const controller = new AbortController();
+  const response = await fetch(`${API_URL}/events`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
 
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    6000
-  );
-
+  let payload: EventsResponse;
   try {
-    const response = await fetch(
-      `${API_URL}/events`,
-      {
-        signal: controller.signal,
-        cache: "no-store",
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        `Unable to load concerts: ${response.status}`
-      );
-    }
-
-    const payload = await response.json();
-
-    const events: ApiEvent[] = Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload?.events)
-        ? payload.events
-        : [];
-
-    if (events.length === 0) {
-      return demoConcerts;
-    }
-
-    return events.map((event, index) =>
-      normalizeEvent(event, index)
-    );
-  } catch (error) {
-    console.error(
-      "LYNORA: Failed to fetch concerts. Using demo data.",
-      error
-    );
-
-    return demoConcerts;
-  } finally {
-    window.clearTimeout(timeout);
+    payload = await response.json();
+  } catch {
+    throw new Error("Respons server konser tidak valid.");
   }
+
+  if (!response.ok) {
+    throw new Error(payload.message || `Gagal mengambil konser (HTTP ${response.status}).`);
+  }
+
+  if (!Array.isArray(payload.events)) {
+    throw new Error("Format respons GET /api/events tidak sesuai. Server harus mengirim { events: [] }.");
+  }
+
+  return payload.events.map(normalizeEvent);
 }
 
-export function matchesQuery(
-  concert: Concert,
-  query: string
-): boolean {
-  const term = query.trim().toLowerCase();
+export function matchesQuery(concert: Concert, query: string): boolean {
+  const keyword = query.trim().toLowerCase();
+  if (!keyword) return true;
 
-  if (!term) return true;
+  const artists = Array.isArray((concert as Concert & { artists?: { name?: string }[] }).artists)
+    ? (concert as Concert & { artists?: { name?: string }[] }).artists!.map((artist) => artist.name).join(" ")
+    : "";
 
-  return [
-    concert.name,
-    concert.artist,
-    concert.artist_country,
-    concert.category_name,
-    concert.venue_name,
-    concert.venue_address,
-    concert.organizer_name,
-  ]
-    .filter(Boolean)
-    .some((value) =>
-      String(value)
-        .toLowerCase()
-        .includes(term)
-    );
+  return [concert.name, concert.description, concert.artist, artists,
+    concert.category_name, concert.venue_name, concert.venue_address,
+    concert.organizer_name]
+    .some((value) => String(value ?? "").toLowerCase().includes(keyword));
 }
 
-export function isInCity(
-  concert: Concert,
-  city: string
-): boolean {
-  const target = city.trim().toLowerCase();
-
-  if (!target) return true;
-
-  return `
-    ${concert.venue_name || ""}
-    ${concert.venue_address || ""}
-  `
-    .toLowerCase()
-    .includes(target);
+export function isInCity(concert: Concert, city: string): boolean {
+  const keyword = city.trim().toLowerCase();
+  if (!keyword) return true;
+  return `${concert.venue_name ?? ""} ${concert.venue_address ?? ""}`.toLowerCase().includes(keyword);
 }

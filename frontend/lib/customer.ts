@@ -1,3 +1,4 @@
+
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
 
@@ -15,31 +16,58 @@ export type User = {
   unreadNotifications?: number;
 };
 
+export type ConcertSalesStatus =
+  | "coming_soon"
+  | "on_sale"
+  | "sold_out"
+  | "ended"
+  | "not_available";
+
+export type ConcertArtist = {
+  id?: number;
+  name: string;
+  country?: string | null;
+  photo?: string | null;
+};
+
 export type Concert = {
   id: number;
   name: string;
   description?: string | null;
-
   poster_url?: string | null;
-
   start_date: string;
   end_date: string;
-
   status?: string;
-
+  approval_status?: "pending" | "approved" | "revision_required" | "rejected";
+  publication_status?: "draft" | "published" | "unpublished";
+  sales_start_at?: string | null;
+  sales_end_at?: string | null;
+  sales_status?: ConcertSalesStatus;
   category_id?: number;
   category_name?: string;
-
   venue_id?: number;
   venue_name?: string;
   venue_address?: string;
-
+  latitude?: number | null;
+  longitude?: number | null;
   price?: number;
-
   artist?: string;
   artist_country?: string;
-
+  artists?: ConcertArtist[];
+  organizer_id?: number;
   organizer_name?: string;
+  total_quota?: number;
+  total_sold?: number;
+  remaining_tickets?: number;
+  ticket_categories?: {
+    id: number;
+    name: string;
+    price: number;
+    quota: number;
+    sold: number;
+    remaining: number;
+    benefit?: string | null;
+  }[];
 };
 
 export type TicketStatus = "active" | "used" | "expired";
@@ -85,10 +113,6 @@ export type Notification = {
   read: boolean;
 };
 
-/* ------------------------------------------------------------------ */
-/* USER SYNC (sidebar ikut berubah saat profile diupdate)              */
-/* ------------------------------------------------------------------ */
-
 export const USER_UPDATED_EVENT = "lynora:user-updated";
 
 export function updateStoredUser(patch: Partial<User>): User {
@@ -97,29 +121,25 @@ export function updateStoredUser(patch: Partial<User>): User {
   try {
     current = JSON.parse(localStorage.getItem("user") || "{}");
   } catch {
-    /* abaikan data rusak */
+    // Abaikan data user yang tidak valid.
   }
 
   const next: User = {
     ...current,
     ...patch,
-    // kalau foto diganti, paksa browser ambil gambar baru (anti-cache)
     ...(patch.profile_photo !== undefined
       ? { photo_version: Date.now() }
       : {}),
   };
 
   localStorage.setItem("user", JSON.stringify(next));
+
   window.dispatchEvent(
     new CustomEvent(USER_UPDATED_EVENT, { detail: next })
   );
 
   return next;
 }
-
-/* ------------------------------------------------------------------ */
-/* HELPERS                                                             */
-/* ------------------------------------------------------------------ */
 
 export function imageUrl(path?: string | null): string {
   if (!path) return "/images/hero/home.jpg";
@@ -452,3 +472,4 @@ export const ticketStatusLabel: Record<TicketStatus, string> = {
   used: "Used",
   expired: "Expired",
 };
+

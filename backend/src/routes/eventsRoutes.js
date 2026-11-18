@@ -1,4 +1,3 @@
-
 const express = require("express");
 
 const {
@@ -11,6 +10,8 @@ const {
   getPendingEvents,
   approveEvent,
   rejectEvent,
+  publishEvent,
+  unpublishEvent,
 } = require("../controllers/eventsController");
 
 const {
@@ -26,10 +27,21 @@ const upload = require("../middlewares/uploadMiddleware");
 
 const router = express.Router();
 
-// Customer: jelajah konser
+// ======================================================
+// CUSTOMER
+// ======================================================
+
+// Daftar konser yang sudah disetujui dan dipublikasikan.
 router.get("/", getEvents);
 
-// Event Organizer: daftar konser milik sendiri
+// Detail konser.
+router.get("/:id", getEventById);
+
+// ======================================================
+// EVENT ORGANIZER
+// ======================================================
+
+// Daftar konser milik EO.
 router.get(
   "/my-events",
   authenticateToken,
@@ -37,15 +49,52 @@ router.get(
   getMyEvents
 );
 
-// Super Admin: daftar konser pending
-router.get(
-  "/pending",
+// Buat konser.
+router.post(
+  "/",
   authenticateToken,
-  authorizeRoles("super_admin"),
-  getPendingEvents
+  authorizeRoles("organizer"),
+  upload.single("poster"),
+  createEvent
 );
 
-// Event Organizer: kategori tiket
+// Edit konser.
+router.put(
+  "/:id",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  upload.single("poster"),
+  updateEvent
+);
+
+// Hapus konser.
+router.delete(
+  "/:id",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  deleteEvent
+);
+
+// Publikasikan konser.
+router.patch(
+  "/:id/publish",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  publishEvent
+);
+
+// Batalkan publikasi konser.
+router.patch(
+  "/:id/unpublish",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  unpublishEvent
+);
+
+// ======================================================
+// EVENT ORGANIZER: TICKET CATEGORIES
+// ======================================================
+
 router.post(
   "/:id/tickets",
   authenticateToken,
@@ -74,33 +123,19 @@ router.delete(
   deleteTicketCategory
 );
 
-// Event Organizer: membuat konser + upload poster
-router.post(
-  "/",
+// ======================================================
+// SUPER ADMIN
+// ======================================================
+
+// Daftar konser pending dan revisi.
+router.get(
+  "/pending",
   authenticateToken,
-  authorizeRoles("organizer"),
-  upload.single("poster"),
-  createEvent
+  authorizeRoles("super_admin"),
+  getPendingEvents
 );
 
-// Event Organizer: mengubah konser + upload poster opsional
-router.put(
-  "/:id",
-  authenticateToken,
-  authorizeRoles("organizer"),
-  upload.single("poster"),
-  updateEvent
-);
-
-// Event Organizer: menghapus konser
-router.delete(
-  "/:id",
-  authenticateToken,
-  authorizeRoles("organizer"),
-  deleteEvent
-);
-
-// Super Admin: menyetujui konser
+// Setujui konser.
 router.patch(
   "/:id/approve",
   authenticateToken,
@@ -108,15 +143,12 @@ router.patch(
   approveEvent
 );
 
-// Super Admin: menolak konser
+// Tolak konser.
 router.patch(
   "/:id/reject",
   authenticateToken,
   authorizeRoles("super_admin"),
   rejectEvent
 );
-
-// Customer: detail konser
-router.get("/:id", getEventById);
 
 module.exports = router;

@@ -1,4 +1,3 @@
-
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
@@ -52,11 +51,15 @@ const authRoutes = require("./routes/authRoutes");
 const eventsRoutes = require("./routes/eventsRoutes");
 const ordersRoutes = require("./routes/ordersRoutes");
 const paymentsRoutes = require("./routes/paymentsRoutes");
+const notificationsRoutes = require("./routes/notificationsRoutes");
+const wishlistRoutes = require("./routes/wishlistRoutes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/events", eventsRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/payments", paymentsRoutes);
+app.use("/api/notifications", notificationsRoutes);
+app.use("/api/wishlist", wishlistRoutes);
 
 // Upload Error Handler
 app.use((error, req, res, next) => {

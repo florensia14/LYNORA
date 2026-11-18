@@ -6,15 +6,23 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import Link from "next/link";
 
+
+
 import CustomerShell from "@/components/layout/CustomerShell";
 
-import { fetchConcerts, matchesQuery } from "@/lib/api";
+import { fetchCustomerHomeConcerts, matchesCustomerHomeQuery } from "@/lib/customer-home-api";
 
-import { imageUrl, type Concert } from "@/lib/customer";
+import { API_URL, imageUrl, type Concert } from "@/lib/customer";
 
 
 
-// Types
+/* ==========================================================================
+
+   1. TYPES
+
+   ========================================================================== */
+
+
 
 type ConcertMeta = Concert & {
 
@@ -34,19 +42,34 @@ type ConcertMeta = Concert & {
 
 type StatusKey = "comingSoon" | "onSale" | "new";
 
-type TabKey = "upcoming" | "onSale";
-
 type Option = { value: string; label: string };
 
 
 
-// Constants
+/* ==========================================================================
+
+   2. CONSTANTS
+
+   ========================================================================== */
+
+
 
 const PAGE_SIZE = 16;
 
+const TOAST_DURATION_MS = 2500;
+
+
+
+const WISHLIST_KEY = "lynora_wishlist";
+
+const WISHLIST_EVENT = "lynora:wishlist-updated";
+
 const WISHLIST_ICONS = {
+
   idle: "/icons/wishlist.png",
+
   active: "/icons/wishlist(1).png",
+
 };
 
 
@@ -73,6 +96,16 @@ const CITIES = [
 
 ];
 
+
+
+const GENRES = ["Pop", "Rock", "Hip-Hop", "EDM", "Indie", "K-Pop"];
+
+
+
+// --- Select options ---------------------------------------------------------
+
+
+
 const CITY_OPTIONS: Option[] = [ALL_CITIES, ...CITIES.map((c) => c.name)].map((name) => ({
 
   value: name,
@@ -83,67 +116,11 @@ const CITY_OPTIONS: Option[] = [ALL_CITIES, ...CITIES.map((c) => c.name)].map((n
 
 
 
-const GENRES = ["Pop", "Rock", "Hip-Hop", "EDM", "Indie", "K-Pop"];
-
 const CATEGORY_OPTIONS: Option[] = [
 
   { value: "all", label: "All" },
 
   ...GENRES.map((name) => ({ value: name, label: name })),
-
-];
-
-
-
-// Artist origin: international acts touring Indonesia + local Indonesian acts.
-
-// `aliases` cover the different spellings the API might return.
-
-const COUNTRIES = [
-
-  { name: "Indonesia", aliases: ["indonesia", "id", "indo"] },
-
-  { name: "South Korea", aliases: ["south korea", "korea", "korea selatan", "republic of korea", "korea s.", "kr"] },
-
-  { name: "Japan", aliases: ["japan", "jepang", "jp"] },
-
-  { name: "United States", aliases: ["united states", "united states of america", "usa", "us", "america", "amerika serikat"] },
-
-  { name: "United Kingdom", aliases: ["united kingdom", "uk", "england", "britain", "great britain", "inggris"] },
-
-  { name: "Australia", aliases: ["australia", "au"] },
-
-  { name: "Canada", aliases: ["canada", "kanada"] },
-
-  { name: "Singapore", aliases: ["singapore", "singapura"] },
-
-  { name: "Malaysia", aliases: ["malaysia"] },
-
-  { name: "Thailand", aliases: ["thailand", "thai"] },
-
-  { name: "Philippines", aliases: ["philippines", "filipina"] },
-
-  { name: "China", aliases: ["china", "tiongkok", "cn"] },
-
-  { name: "Taiwan", aliases: ["taiwan"] },
-
-  { name: "India", aliases: ["india"] },
-
-  { name: "Germany", aliases: ["germany", "jerman"] },
-
-  { name: "France", aliases: ["france", "prancis"] },
-
-  { name: "Sweden", aliases: ["sweden", "swedia"] },
-
-  { name: "Netherlands", aliases: ["netherlands", "belanda", "holland"] },
-
-];
-
-const COUNTRY_OPTIONS: Option[] = [
-
-  { value: "all", label: "All countries" },
-
-  ...COUNTRIES.map((c) => ({ value: c.name, label: c.name })),
 
 ];
 
@@ -207,19 +184,259 @@ const STATUS: Record<StatusKey, { text: string; style: string }> = {
 
 
 
-// Grid: 1 col on phones, 2 on tablets, 3 on laptops, 4 on wide screens
+/* ==========================================================================
 
-const GRID =
+   3. TAILWIND STYLE TOKENS (dikelompokkan per komponen)
 
-  "grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 min-[1500px]:grid-cols-4";
-
-
-
-const FIELD = "h-12 rounded-xl border border-white/10 bg-[#10162E]";
+   ========================================================================== */
 
 
 
-// Helpers
+const cx = (...classes: Array<string | false | null | undefined>) =>
+
+  classes.filter(Boolean).join(" ");
+
+
+
+const styles = {
+
+  // Grid follows the Customer Home card layout: 1 mobile, 2 tablet, 3 desktop
+
+  grid: "grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3",
+
+
+
+  chevron: "pointer-events-none h-4 w-4",
+
+
+
+  infoRow: {
+
+    base: "flex gap-2 text-xs text-[#D1D5E0]",
+
+    top: "items-start leading-relaxed",
+
+    center: "items-center",
+
+    icon: "h-4 w-4 object-contain",
+
+    iconTop: "mt-0.5 shrink-0",
+
+  },
+
+
+
+  statusBadge: "absolute left-3 top-3 rounded-md px-3 py-1.5 text-xs font-extrabold",
+
+
+
+  filterSelect: {
+
+    label:
+
+      "relative flex min-w-0 items-center gap-3 px-4 text-white transition focus-within:ring-2 focus-within:ring-[#22D3EE] hover:border-[#8B5CF6]",
+
+    text: "min-w-0 flex-1 truncate text-sm font-bold",
+
+    chevron: "shrink-0 text-white/80",
+
+    select: "absolute inset-0 h-full w-full cursor-pointer opacity-0",
+
+    option: "bg-[#161624] text-white",
+
+  },
+
+
+
+  icons: {
+
+    category: "h-5 w-5 shrink-0 text-white",
+
+    price: "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#F5B84E] text-xs font-black text-[#0B1020]",
+
+    image: "h-5 w-5 shrink-0 object-contain",
+
+  },
+
+
+
+  hero: {
+
+    root: "relative isolate overflow-hidden rounded-2xl border border-white/10 bg-[#0B1020]",
+
+    image: "absolute inset-0 -z-20 h-full w-full object-cover object-center",
+
+    overlay: "absolute inset-0 -z-10 bg-gradient-to-b from-[#080D20]/30 via-[#080D20]/40 to-[#080D20]/85",
+
+    content: "flex min-h-[230px] flex-col px-4 py-5 sm:min-h-[245px] lg:min-h-[285px] sm:px-7 sm:py-7 lg:px-9",
+
+    titleWrap: "mt-5 sm:mt-6",
+
+    title:
+
+      "bg-gradient-to-r from-[#8B7CF6] via-[#7C9CF0] to-[#22D3EE] bg-clip-text text-3xl font-black leading-tight text-transparent sm:text-4xl lg:text-5xl",
+
+    subtitle: "mt-1 max-w-[560px] text-sm font-bold text-white sm:text-base",
+
+    controls: "mt-6 flex flex-col gap-2.5 pt-2 sm:mt-auto sm:flex-row sm:items-center sm:gap-3 sm:pt-7",
+
+    searchLabel: "relative flex min-w-0 flex-1 items-center sm:max-w-[600px]",
+
+    searchIcon: "pointer-events-none absolute left-4 h-5 w-5 text-white",
+
+    searchInput:
+
+      "h-12 w-full rounded-xl border border-white/25 bg-gradient-to-r from-[#5648D6]/90 to-[#8E80F3]/80 pl-12 pr-4 text-sm font-semibold text-white outline-none placeholder:text-white/70 focus-visible:ring-2 focus-visible:ring-[#22D3EE] sm:h-14",
+
+    cityField:
+
+      "h-12 w-full shrink-0 gap-2 rounded-xl border border-white/10 bg-[#0B1020]/85 px-3 sm:h-14 sm:w-[220px] sm:gap-3 sm:px-4",
+
+    cityIcon: "h-5 w-5 shrink-0 object-contain",
+
+  },
+
+
+
+  filters: {
+
+    section: "mt-5 grid w-full max-w-[1040px] grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4",
+
+    group: "min-w-0 space-y-1.5",
+
+    label: "pl-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#929BB5]",
+
+    field: "h-11 rounded-lg border border-[#303A5B] bg-[#151D38] px-3.5 hover:border-[#8B5CF6] sm:h-12",
+
+    dateIcon: "h-5 w-5 shrink-0 object-contain",
+
+  },
+
+
+
+  toolbar: {
+
+    wrapper: "mt-6 flex flex-wrap items-center justify-between gap-3",
+
+    left: "flex items-center gap-3",
+
+    bar: "h-9 w-[6px] rounded-full bg-gradient-to-b from-[#3B82F6] to-[#8B5CF6]",
+
+    count: "text-xl font-black text-white",
+
+    right: "flex w-full items-center justify-end gap-3 sm:w-auto",
+
+    sort: "h-12 w-[170px] rounded-xl border border-white/10 bg-[#2A3150] sm:w-[180px]",
+
+  },
+
+
+
+  card: {
+
+    link: "group block min-w-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6]",
+
+    root: "flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-[#8B5CF6]/30 bg-[#202A4F] transition-[border-color,box-shadow,transform] duration-300 group-hover:-translate-y-1 group-hover:border-[#8B5CF6]/70 group-hover:shadow-[0_12px_28px_rgba(91,52,170,0.28)]",
+
+    media: "relative aspect-[2/1] w-full overflow-hidden",
+
+    poster: "h-full w-full object-cover transition duration-500 group-hover:scale-105",
+
+    fallback:
+
+      "flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-[#31245D] via-[#202A4F] to-[#0B1122] px-4 text-center",
+
+    fallbackBrand: "text-3xl font-black text-[#A78BFA]",
+
+    fallbackName: "mt-1 line-clamp-2 text-xs font-semibold text-white/75",
+
+    fallbackTag: "mt-1 text-[9px] font-bold tracking-[0.25em] text-[#22D3EE]",
+
+    wishlistBtn:
+
+      "absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-lg border border-white/25 bg-[#0B1020]/85 transition hover:scale-105 hover:border-[#8B5CF6]",
+
+    wishlistIcon: "h-5 w-5 object-contain",
+
+    price:
+
+      "absolute bottom-2 right-3 rounded-lg border border-[#8B5CF6] bg-[#0B1020]/95 px-2.5 py-1.5 text-xs font-extrabold text-white",
+
+    body: "flex flex-1 flex-col px-3 py-2.5",
+
+    title: "line-clamp-2 text-[15px] font-extrabold leading-snug text-white group-hover:text-white sm:text-base",
+
+    category: "mt-1 text-[13px] font-bold text-[#A78BFA]",
+
+    description: "mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-[#A9AAB4]",
+
+    divider: "my-2.5 border-t border-white/20",
+
+    info: "flex flex-col gap-2",
+
+  },
+
+
+
+  pagination: {
+
+    wrapper:
+
+      "mt-8 flex flex-col items-center justify-between gap-4 rounded-xl border border-white/10 bg-[#151E36] px-4 py-4 sm:flex-row",
+
+    summary: "text-center text-sm font-semibold text-slate-300 sm:text-left",
+
+    nav: "flex flex-wrap items-center justify-center gap-2",
+
+    base: "flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-sm font-extrabold transition",
+
+    idle: "bg-[#2A3150] text-slate-200 hover:bg-[#6255DF]/70 hover:text-white",
+
+    arrowExtra: "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#2A3150]",
+
+    active: "bg-[#6255DF] text-white",
+
+    dots: "px-1 text-slate-400",
+
+  },
+
+
+
+  page: {
+
+    main: "mx-auto w-full min-w-0 max-w-none px-3 pb-10 pt-4 sm:px-5 sm:pt-5 xl:px-7 2xl:px-8",
+
+    results: "mt-5",
+
+    skeleton: "h-[350px] animate-pulse rounded-xl bg-[#202A4F]",
+
+    emptyBox: "rounded-xl border border-white/10 bg-[#151E36] px-4 py-14 text-center",
+
+    emptyTitle: "text-lg font-extrabold text-white",
+
+    emptyText: "mx-auto mt-1 max-w-md text-sm text-slate-400",
+
+    toast:
+
+      "pointer-events-none fixed bottom-5 left-1/2 z-[100] w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#080D1B]/95 px-4 py-2.5 text-center text-xs font-semibold text-white shadow-xl backdrop-blur-md sm:px-5 sm:py-3 sm:text-sm animate-[toast-in_180ms_ease-out]",
+
+  },
+
+} as const;
+
+
+
+/* ==========================================================================
+
+   4. HELPERS
+
+   ========================================================================== */
+
+
+
+// --- Formatting ------------------------------------------------------------
+
+
 
 function formatPrice(price?: number) {
 
@@ -279,9 +496,21 @@ function formatDate(date?: string) {
 
 
 
+function normalize(text?: string | null) {
+
+  return (text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+}
+
+
+
+// --- Concert data ----------------------------------------------------------
+
+
+
 function getPoster(path?: string | null) {
 
-  if (!path) return "/images/hero/blackpink.jpg";
+  if (!path || !path.trim()) return null;
 
 
 
@@ -303,31 +532,15 @@ function getPoster(path?: string | null) {
 
 function getDescription(concert: Concert) {
 
-  return concert.venue_name
+  return (
 
-    ? `Enjoy an unforgettable live concert experience at ${concert.venue_name}.`
+    concert.description?.trim() ||
 
-    : "Enjoy an unforgettable live concert experience.";
+    (concert.venue_name
 
-}
+      ? `Enjoy an unforgettable live concert experience at ${concert.venue_name}.`
 
-
-
-function getCountries(concert: Concert) {
-
-  const meta = concert as ConcertMeta;
-
-  return Array.from(
-
-    new Set(
-
-      (meta.artists ?? [])
-
-        .map((artist) => artist.country)
-
-        .filter((country): country is string => Boolean(country))
-
-    )
+      : "Enjoy an unforgettable live concert experience.")
 
   );
 
@@ -335,79 +548,43 @@ function getCountries(concert: Concert) {
 
 
 
-function normalize(text?: string | null) {
+// Badge per concert: backend sales_status is authoritative; never infer that a future event is on sale.
 
-  return (text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+function getStatus(concert: Concert): StatusKey {
+
+  const salesStatus = String(
+
+    (concert as ConcertMeta & { sales_status?: string }).sales_status || ""
+
+  ).toLowerCase();
+
+
+
+  if (salesStatus === "on_sale") return "onSale";
+
+  if (salesStatus === "coming_soon" || salesStatus === "not_available") return "comingSoon";
+
+
+
+  const raw = String(concert.status || "").toLowerCase();
+
+  if (raw === "new") return "new";
+
+
+
+  return "comingSoon";
 
 }
+
+
+
+// --- Filters ---------------------------------------------------------------
 
 
 
 function matchesGenre(concert: Concert, genre: string) {
 
   return genre === "all" || normalize(concert.category_name) === normalize(genre);
-
-}
-
-
-
-function matchesCountry(concert: Concert, countryName: string) {
-
-  if (countryName === "all") return true;
-
-
-
-  const country = COUNTRIES.find((item) => item.name === countryName);
-
-  if (!country) return false;
-
-
-
-  const aliases = country.aliases.map(normalize);
-
-  return getCountries(concert).some((value) => aliases.includes(normalize(value)));
-
-}
-
-
-
-// Badge per concert: uses the API status if there is one, otherwise derives it
-
-function getStatus(concert: Concert): StatusKey {
-
-  const meta = concert as ConcertMeta;
-
-  const raw = (meta.status || "").toLowerCase();
-
-
-
-  if (raw.includes("sale")) return "onSale";
-
-  if (raw.includes("soon") || raw.includes("coming")) return "comingSoon";
-
-  if (raw === "new") return "new";
-
-
-
-  const DAY = 24 * 60 * 60 * 1000;
-
-  const now = Date.now();
-
-
-
-  const created = meta.created_at ? new Date(meta.created_at).getTime() : NaN;
-
-  if (!Number.isNaN(created) && now - created < 14 * DAY) return "new";
-
-
-
-  const start = new Date(concert.start_date).getTime();
-
-  if (!Number.isNaN(start) && start - now > 45 * DAY) return "comingSoon";
-
-
-
-  return "onSale";
 
 }
 
@@ -505,6 +682,32 @@ function matchesPrice(concert: Concert, filter: string) {
 
 
 
+// --- Sorting ---------------------------------------------------------------
+
+
+
+function startTime(concert: Concert) {
+
+  const time = new Date(concert.start_date).getTime();
+
+  return Number.isNaN(time) ? Infinity : time;
+
+}
+
+
+
+function priceOf(concert: Concert, fallback: number) {
+
+  return typeof concert.price === "number" ? concert.price : fallback;
+
+}
+
+
+
+// --- Pagination ------------------------------------------------------------
+
+
+
 // Page numbers with ellipsis: 1 2 3 4 … 8
 
 function getPageList(current: number, total: number): (number | "...")[] {
@@ -545,7 +748,45 @@ function getPageList(current: number, total: number): (number | "...")[] {
 
 
 
-// Shared UI
+// --- Wishlist storage (localStorage only) ------------------------------------
+
+
+
+function itemId(item: unknown): string {
+
+  return String(
+
+    typeof item === "object" && item !== null && "id" in item
+
+      ? (item as { id: string | number }).id
+
+      : item
+
+  );
+
+}
+
+
+
+// Boleh melempar error (JSON.parse); pemanggil yang menangani.
+
+function readWishlist(): unknown[] {
+
+  const saved = JSON.parse(localStorage.getItem(WISHLIST_KEY) || "[]");
+
+  return Array.isArray(saved) ? saved : [];
+
+}
+
+
+
+/* ==========================================================================
+
+   5. SHARED UI
+
+   ========================================================================== */
+
+
 
 function Chevron({ className = "" }: { className?: string }) {
 
@@ -561,7 +802,7 @@ function Chevron({ className = "" }: { className?: string }) {
 
       strokeWidth="2"
 
-      className={`pointer-events-none h-4 w-4 ${className}`}
+      className={cx(styles.chevron, className)}
 
     >
 
@@ -593,27 +834,15 @@ function InfoRow({
 
 }) {
 
+  const s = styles.infoRow;
+
+
+
   return (
 
-    <div
+    <div className={cx(s.base, top ? s.top : s.center)}>
 
-      className={`flex gap-2 text-xs text-[#D1D5E0] ${
-
-        top ? "items-start leading-relaxed" : "items-center"
-
-      }`}
-
-    >
-
-      <img
-
-        src={icon}
-
-        alt=""
-
-        className={`h-4 w-4 object-contain ${top ? "mt-0.5 shrink-0" : ""}`}
-
-      />
+      <img src={icon} alt="" className={cx(s.icon, top && s.iconTop)} />
 
       {children}
 
@@ -631,19 +860,7 @@ function StatusBadge({ status }: { status: StatusKey }) {
 
 
 
-  return (
-
-    <span
-
-      className={`absolute left-3 top-3 rounded-md px-3 py-1.5 text-xs font-extrabold ${style}`}
-
-    >
-
-      {text}
-
-    </span>
-
-  );
+  return <span className={cx(styles.statusBadge, style)}>{text}</span>;
 
 }
 
@@ -687,6 +904,8 @@ function FilterSelect({
 
 }) {
 
+  const s = styles.filterSelect;
+
   const selected = options.find((option) => option.value === value);
 
   const text =
@@ -697,17 +916,13 @@ function FilterSelect({
 
   return (
 
-    <label
-
-      className={`relative flex min-w-0 items-center gap-3 px-4 text-white transition focus-within:ring-2 focus-within:ring-[#22D3EE] hover:border-[#8B5CF6] ${className}`}
-
-    >
+    <label className={cx(s.label, className)}>
 
       {icon}
 
-      <span className="min-w-0 flex-1 truncate text-sm font-bold">{text}</span>
+      <span className={s.text}>{text}</span>
 
-      <Chevron className="shrink-0 text-white/80" />
+      <Chevron className={s.chevron} />
 
 
 
@@ -719,13 +934,13 @@ function FilterSelect({
 
         aria-label={label}
 
-        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        className={s.select}
 
       >
 
         {options.map((option) => (
 
-          <option key={option.value} value={option.value} className="bg-[#161624] text-white">
+          <option key={option.value} value={option.value} className={s.option}>
 
             {option.label}
 
@@ -747,7 +962,7 @@ function CategoryIcon() {
 
   return (
 
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 shrink-0 text-white">
+    <svg viewBox="0 0 24 24" fill="currentColor" className={styles.icons.category}>
 
       <rect x="3" y="3" width="7.5" height="7.5" rx="2" />
 
@@ -767,13 +982,23 @@ function CategoryIcon() {
 
 function PriceIcon() {
 
+  return <span className={styles.icons.price}>$</span>;
+
+}
+
+
+
+function FilterField({ title, children }: { title: string; children: ReactNode }) {
+
   return (
 
-    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#F5B84E] text-xs font-black text-[#0B1020]">
+    <div className={styles.filters.group}>
 
-      $
+      <p className={styles.filters.label}>{title}</p>
 
-    </span>
+      {children}
+
+    </div>
 
   );
 
@@ -781,13 +1006,15 @@ function PriceIcon() {
 
 
 
-// Hero
+/* ==========================================================================
+
+   6. HERO
+
+   ========================================================================== */
+
+
 
 function ExploreHero({
-
-  tab,
-
-  onTab,
 
   search,
 
@@ -799,10 +1026,6 @@ function ExploreHero({
 
 }: {
 
-  tab: TabKey;
-
-  onTab: (tab: TabKey) => void;
-
   search: string;
 
   onSearch: (value: string) => void;
@@ -813,103 +1036,39 @@ function ExploreHero({
 
 }) {
 
-  const tabs: { key: TabKey; label: string }[] = [
-
-    { key: "upcoming", label: "Upcoming" },
-
-    { key: "onSale", label: "On Sale" },
-
-  ];
+  const s = styles.hero;
 
 
 
   return (
 
-    <section className="relative isolate overflow-hidden rounded-2xl border border-white/10 bg-[#0B1020]">
+    <section className={s.root}>
 
-      <img
+      <img src="/images/hero/home.jpg" alt="" className={s.image} />
 
-        src="/images/hero/home.jpg"
-
-        alt=""
-
-        className="absolute inset-0 -z-20 h-full w-full object-cover object-center"
-
-      />
-
-      <div className="absolute inset-0 -z-10 bg-gradient-to-b from-[#080D20]/30 via-[#080D20]/40 to-[#080D20]/85" />
+      <div className={s.overlay} />
 
 
 
-      <div className="flex min-h-[240px] flex-col px-4 py-4 sm:min-h-[280px] sm:px-7 sm:py-6 lg:min-h-[320px] lg:px-10 lg:py-7">
+      <div className={s.content}>
 
-        <div className="flex gap-3" role="tablist" aria-label="Concert status">
+        {/* Title */}
 
-          {tabs.map(({ key, label }) => {
+        <div className={s.titleWrap}>
 
-            const active = tab === key;
+          <h1 className={s.title}>EXPLORE CONCERTS</h1>
 
-            return (
-
-              <button
-
-                key={key}
-
-                type="button"
-
-                role="tab"
-
-                aria-selected={active}
-
-                onClick={() => onTab(key)}
-
-                className={`rounded-full border px-5 py-1.5 text-sm font-extrabold text-white transition sm:px-7 sm:py-2 ${
-
-                  active
-
-                    ? "border-[#A78BFA] bg-gradient-to-r from-[#6255DF] to-[#8B5CF6]"
-
-                    : "border-[#E54869] bg-[#0B1020]/30 hover:bg-[#E54869]/20"
-
-                }`}
-
-              >
-
-                {label}
-
-              </button>
-
-            );
-
-          })}
+          <p className={s.subtitle}>Discover amazing concerts and live events around you</p>
 
         </div>
 
 
 
-        <div className="mt-3 sm:mt-4">
+        {/* Search + city */}
 
-          <h1 className="bg-gradient-to-r from-[#8B7CF6] via-[#7C9CF0] to-[#22D3EE] bg-clip-text text-2xl font-black leading-tight text-transparent sm:text-3xl lg:text-4xl">
+        <div className={s.controls}>
 
-            EXPLORE CONCERTS
-
-          </h1>
-
-
-
-          <p className="mt-1 max-w-[560px] text-xs font-bold text-white sm:text-sm">
-
-            Discover amazing concerts and live events around you
-
-          </p>
-
-        </div>
-
-
-
-        <div className="mt-auto flex items-center gap-2 pt-4 sm:gap-3 sm:pt-5">
-
-          <label className="relative flex min-w-0 flex-1 items-center sm:max-w-[600px]">
+          <label className={s.searchLabel}>
 
             <svg
 
@@ -923,7 +1082,7 @@ function ExploreHero({
 
               strokeLinecap="round"
 
-              className="pointer-events-none absolute left-4 h-5 w-5 text-white"
+              className={s.searchIcon}
 
             >
 
@@ -945,7 +1104,7 @@ function ExploreHero({
 
               aria-label="Search concerts"
 
-              className="h-10 w-full rounded-xl border border-white/25 bg-gradient-to-r from-[#5648D6]/90 to-[#8E80F3]/80 pl-11 pr-3 text-xs font-semibold text-white outline-none placeholder:text-white/70 focus-visible:ring-2 focus-visible:ring-[#22D3EE] sm:h-11 sm:text-sm"
+              className={s.searchInput}
 
             />
 
@@ -963,9 +1122,9 @@ function ExploreHero({
 
             label="Choose city"
 
-            className="h-10 w-[118px] shrink-0 gap-2 rounded-xl border border-white/10 bg-[#0B1020]/85 px-2.5 sm:h-11 sm:w-[150px] sm:gap-3 sm:px-3"
+            className={s.cityField}
 
-            icon={<img src="/icons/flag.png" alt="" className="h-5 w-5 shrink-0 object-contain" />}
+            icon={<img src="/icons/flag.png" alt="" className={s.cityIcon} />}
 
           />
 
@@ -981,63 +1140,229 @@ function ExploreHero({
 
 
 
-// Concert card: visual style and wishlist controls match Customer Home
+/* ==========================================================================
+
+   7. CONCERT CARD (visual style and wishlist controls match Customer Home)
+
+   ========================================================================== */
+
+
+
 function ConcertCard({
+
   concert,
+
   index,
+
   wishlisted,
+
   onWishlist,
+
 }: {
+
   concert: Concert;
+
   index: number;
+
   wishlisted: boolean;
+
   onWishlist: (concert: Concert) => void;
+
 }) {
+
+  const s = styles.card;
+
   const meta = concert as ConcertMeta;
+
+  const poster = getPoster(concert.poster_url);
+
   const artistCountry = Array.from(
+
     new Set(meta.artists?.map((artist) => artist.country).filter(Boolean))
+
   ).join(", ");
 
+
+
   return (
-    <Link href={`/events/${concert.id}`} className="group block min-w-0">
-      <article className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-[#8B5CF6]/30 bg-[#202A4F] transition duration-300 hover:-translate-y-1 hover:border-[#22D3EE]">
-        <div className="relative h-[125px] overflow-hidden sm:h-[140px]">
-          <img src={getPoster(concert.poster_url)} alt={concert.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" loading={index > 2 ? "lazy" : "eager"} />
+
+    <Link href={`/customer/explore/${concert.id}`} className={s.link}>
+
+      <article className={s.root}>
+
+        {/* Media */}
+
+        <div className={s.media}>
+
+          {poster ? (
+
+            <img
+
+              src={poster}
+
+              alt={concert.name}
+
+              className={s.poster}
+
+              loading={index > 2 ? "lazy" : "eager"}
+
+              onError={(event) => {
+
+                event.currentTarget.style.display = "none";
+
+              }}
+
+            />
+
+          ) : (
+
+            <div className={s.fallback}>
+
+              <span className={s.fallbackBrand}>LYNORA</span>
+
+              <span className={s.fallbackName}>{concert.name}</span>
+
+              <span className={s.fallbackTag}>LIVE EXPERIENCE</span>
+
+            </div>
+
+          )}
+
+
+
           <StatusBadge status={getStatus(concert)} />
+
+
+
           <button
+
             type="button"
+
             aria-label={wishlisted ? "Remove from wishlist" : "Add to wishlist"}
+
             aria-pressed={wishlisted}
+
             onClick={(event) => {
+
               event.preventDefault();
+
               event.stopPropagation();
+
               onWishlist(concert);
+
             }}
-            className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-lg border border-white/25 bg-[#0B1020]/85 transition hover:scale-105 hover:border-[#8B5CF6]"
+
+            className={s.wishlistBtn}
+
           >
-            <img src={wishlisted ? WISHLIST_ICONS.active : WISHLIST_ICONS.idle} alt="" className="h-5 w-5 object-contain" />
+
+            <img
+
+              src={wishlisted ? WISHLIST_ICONS.active : WISHLIST_ICONS.idle}
+
+              alt=""
+
+              className={s.wishlistIcon}
+
+            />
+
           </button>
-          <span className="absolute bottom-2 right-3 rounded-lg border border-[#8B5CF6] bg-[#0B1020]/95 px-2.5 py-1.5 text-xs font-extrabold text-white">{formatPrice(concert.price)}</span>
+
+
+
+          <span className={s.price}>{formatPrice(concert.price)}</span>
+
         </div>
-        <div className="flex flex-1 flex-col p-3">
-          <span className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-[#22D3EE]">Explore #{index + 1}</span>
-          <h3 className="line-clamp-2 text-base font-extrabold leading-snug text-white group-hover:text-cyan-300 sm:text-[17px]">{concert.name}</h3>
-          <p className="mt-1 text-[13px] font-bold text-[#A78BFA]">{concert.category_name || "Live Concert"}</p>
-          <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-[#A9AAB4]">{getDescription(concert)}</p>
-          <div className="my-2.5 border-t border-white/20" />
-          <div className="flex flex-col gap-2">
-            <InfoRow icon="/icons/calendar (1).png"><strong>{formatDate(concert.start_date)}</strong></InfoRow>
-            <InfoRow icon="/icons/flag.png"><span>From: <strong>{artistCountry || "To be announced"}</strong></span></InfoRow>
-            <InfoRow icon="/icons/pin.png" top><strong>{concert.venue_name || "Venue to be announced"}{concert.venue_address ? `, ${concert.venue_address}` : ""}</strong></InfoRow>
-            {meta.organizer_name && <InfoRow icon="/icons/circus.png"><span>Organized by: <strong>{meta.organizer_name}</strong></span></InfoRow>}
+
+
+
+        {/* Body */}
+
+        <div className={s.body}>
+
+          <h3 className={s.title}>{concert.name}</h3>
+
+          <p className={s.category}>{concert.category_name || "Live Concert"}</p>
+
+          <p className={s.description}>{getDescription(concert)}</p>
+
+
+
+          <div className={s.divider} />
+
+
+
+          <div className={s.info}>
+
+            <InfoRow icon="/icons/calendar (1).png">
+
+              <strong>{formatDate(concert.start_date)}</strong>
+
+            </InfoRow>
+
+
+
+            <InfoRow icon="/icons/flag.png">
+
+              <span>
+
+                From: <strong>{artistCountry || "To be announced"}</strong>
+
+              </span>
+
+            </InfoRow>
+
+
+
+            <InfoRow icon="/icons/pin.png" top>
+
+              <strong>
+
+                {concert.venue_name || "Venue to be announced"}
+
+                {concert.venue_address ? `, ${concert.venue_address}` : ""}
+
+              </strong>
+
+            </InfoRow>
+
+
+
+            {meta.organizer_name && (
+
+              <InfoRow icon="/icons/circus.png">
+
+                <span>
+
+                  Organized by: <strong>{meta.organizer_name}</strong>
+
+                </span>
+
+              </InfoRow>
+
+            )}
+
           </div>
+
         </div>
+
       </article>
+
     </Link>
+
   );
+
 }
 
-// Pagination
+
+
+/* ==========================================================================
+
+   8. PAGINATION
+
+   ========================================================================== */
+
+
 
 function Pagination({
 
@@ -1069,21 +1394,17 @@ function Pagination({
 
 }) {
 
-  const base =
+  const s = styles.pagination;
 
-    "flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-sm font-extrabold transition";
-
-  const idle = "bg-[#2A3150] text-slate-200 hover:bg-[#6255DF]/70 hover:text-white";
-
-  const arrow = `${base} ${idle} disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#2A3150]`;
+  const arrow = cx(s.base, s.idle, s.arrowExtra);
 
 
 
   return (
 
-    <div className="mt-8 flex flex-col items-center justify-between gap-4 rounded-xl border border-white/10 bg-[#151E36] px-4 py-4 sm:flex-row">
+    <div className={s.wrapper}>
 
-      <p className="text-center text-sm font-semibold text-slate-300 sm:text-left">
+      <p className={s.summary}>
 
         Showing {from}-{to} of {total} concert events
 
@@ -1093,7 +1414,7 @@ function Pagination({
 
       {totalPages > 1 && (
 
-        <nav className="flex flex-wrap items-center justify-center gap-2" aria-label="Pagination">
+        <nav className={s.nav} aria-label="Pagination">
 
           <button
 
@@ -1119,7 +1440,7 @@ function Pagination({
 
             item === "..." ? (
 
-              <span key={`dots-${i}`} className="px-1 text-slate-400">
+              <span key={`dots-${i}`} className={s.dots}>
 
                 …
 
@@ -1139,7 +1460,7 @@ function Pagination({
 
                 onClick={() => onPage(item)}
 
-                className={`${base} ${item === page ? "bg-[#6255DF] text-white" : idle}`}
+                className={cx(s.base, item === page ? s.active : s.idle)}
 
               >
 
@@ -1183,9 +1504,21 @@ function Pagination({
 
 
 
-// Page
+/* ==========================================================================
+
+   9. PAGE
+
+   ========================================================================== */
+
+
 
 export default function ExplorePage() {
+
+  const s = styles.page;
+
+
+
+  // --- State ---------------------------------------------------------------
 
   const [concerts, setConcerts] = useState<Concert[]>([]);
 
@@ -1193,17 +1526,15 @@ export default function ExplorePage() {
 
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
 
+  const [wishlistToast, setWishlistToast] = useState("");
+
 
 
   const [search, setSearch] = useState("");
 
-  const [tab, setTab] = useState<TabKey>("upcoming");
-
   const [city, setCity] = useState(ALL_CITIES);
 
   const [category, setCategory] = useState("all");
-
-  const [country, setCountry] = useState("all");
 
   const [dateFilter, setDateFilter] = useState("all");
 
@@ -1231,36 +1562,48 @@ export default function ExplorePage() {
 
 
 
-  // Restore and sync the same saved wishlist used by Customer Home.
-  useEffect(() => {
-    const syncWishlist = () => {
-      try {
-        const saved = JSON.parse(localStorage.getItem("lynora_wishlist") || "[]");
-        if (Array.isArray(saved)) {
-          setWishlistIds(saved.map((item: unknown) =>
-            String(typeof item === "object" && item !== null && "id" in item
-              ? (item as { id: string | number }).id
-              : item)
-          ).filter(Boolean));
-        } else {
-          setWishlistIds([]);
-        }
-      } catch (error) {
-        console.error("Failed to read wishlist:", error);
-        setWishlistIds([]);
-      }
-    };
+  // --- Toast: match the non-blocking wishlist toast used on Customer Home ----
 
+  useEffect(() => {
+
+    if (!wishlistToast) return;
+
+
+
+    const timeout = window.setTimeout(() => setWishlistToast(""), TOAST_DURATION_MS);
+
+    return () => window.clearTimeout(timeout);
+
+  }, [wishlistToast]);
+
+
+
+  // --- Wishlist: load the authenticated user's wishlist from the backend
+  useEffect(() => {
+    let active = true;
+    async function syncWishlist() {
+      const token = localStorage.getItem("token");
+      if (!token) { if (active) setWishlistIds([]); return; }
+      try {
+        const response = await fetch(`${API_URL}/wishlist`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error("Gagal mengambil Wishlist.");
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.wishlists) ? payload.wishlists : [];
+        if (active) setWishlistIds(rows.map((item: any) => String(item.event_id ?? item.id ?? "")).filter(Boolean));
+      } catch (error) {
+        console.error("Failed to load wishlist:", error);
+        if (active) setWishlistIds([]);
+      }
+    }
     syncWishlist();
-    window.addEventListener("storage", syncWishlist);
-    window.addEventListener("lynora:wishlist-updated", syncWishlist);
-    return () => {
-      window.removeEventListener("storage", syncWishlist);
-      window.removeEventListener("lynora:wishlist-updated", syncWishlist);
-    };
+    window.addEventListener(WISHLIST_EVENT, syncWishlist);
+    return () => { active = false; window.removeEventListener(WISHLIST_EVENT, syncWishlist); };
   }, []);
 
-  // Load concerts once (supports /customer/explore?category=Pop)
+  // --- Load concerts once (supports /customer/explore?category=Pop) ----------
 
   useEffect(() => {
 
@@ -1282,7 +1625,7 @@ export default function ExplorePage() {
 
       try {
 
-        const data = await fetchConcerts();
+        const data = await fetchCustomerHomeConcerts();
 
         if (active) setConcerts(data);
 
@@ -1314,83 +1657,47 @@ export default function ExplorePage() {
 
 
 
-  // Apply every filter, then sort
+  // --- Apply every filter, then sort -----------------------------------------
 
   const results = useMemo(() => {
 
-    const now = Date.now();
+    const filtered = concerts.filter(
 
+      (concert) =>
 
-
-    const filtered = concerts.filter((concert) => {
-
-      if (!matchesQuery(concert, search)) return false;
-
-
-
-      if (tab === "upcoming") {
-
-        const start = new Date(concert.start_date).getTime();
-
-        if (!Number.isNaN(start) && start < now) return false;
-
-      } else if (getStatus(concert) !== "onSale") {
-
-        return false;
-
-      }
-
-
-
-      return (
+        matchesCustomerHomeQuery(concert, search) &&
 
         isInCity(concert, city) &&
 
         matchesGenre(concert, category) &&
 
-        matchesCountry(concert, country) &&
-
         matchesDate(concert, dateFilter) &&
 
         matchesPrice(concert, priceFilter)
 
-      );
-
-    });
+    );
 
 
 
     const sorted = [...filtered];
 
-    const time = (c: Concert) => {
-
-      const t = new Date(c.start_date).getTime();
-
-      return Number.isNaN(t) ? Infinity : t;
-
-    };
-
-    const price = (c: Concert, fallback: number) =>
-
-      typeof c.price === "number" ? c.price : fallback;
 
 
+    if (sort === "date") sorted.sort((a, b) => startTime(a) - startTime(b));
 
-    if (sort === "date") sorted.sort((a, b) => time(a) - time(b));
+    if (sort === "price-low") sorted.sort((a, b) => priceOf(a, Infinity) - priceOf(b, Infinity));
 
-    if (sort === "price-low") sorted.sort((a, b) => price(a, Infinity) - price(b, Infinity));
-
-    if (sort === "price-high") sorted.sort((a, b) => price(b, -1) - price(a, -1));
+    if (sort === "price-high") sorted.sort((a, b) => priceOf(b, -1) - priceOf(a, -1));
 
 
 
     return sorted;
 
-  }, [concerts, search, tab, city, category, country, dateFilter, priceFilter, sort]);
+  }, [concerts, search, city, category, dateFilter, priceFilter, sort]);
 
 
 
-  // Pagination
+  // --- Pagination ------------------------------------------------------------
 
   const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
 
@@ -1402,40 +1709,6 @@ export default function ExplorePage() {
 
 
 
-  function toggleWishlist(concert: Concert) {
-    try {
-      const saved = JSON.parse(localStorage.getItem("lynora_wishlist") || "[]");
-      const items: unknown[] = Array.isArray(saved) ? saved : [];
-      const concertId = String(concert.id);
-      const exists = items.some((item) =>
-        String(typeof item === "object" && item !== null && "id" in item
-          ? (item as { id: string | number }).id
-          : item) === concertId
-      );
-      const updated = exists
-        ? items.filter((item) =>
-            String(typeof item === "object" && item !== null && "id" in item
-              ? (item as { id: string | number }).id
-              : item) !== concertId
-          )
-        : [...items.filter((item) => typeof item === "object" && item !== null), concert];
-
-      localStorage.setItem("lynora_wishlist", JSON.stringify(updated));
-      setWishlistIds(updated.map((item) =>
-        String(typeof item === "object" && item !== null && "id" in item
-          ? (item as { id: string | number }).id
-          : item)
-      ).filter(Boolean));
-      window.dispatchEvent(new Event("lynora:wishlist-updated"));
-      window.alert(exists
-        ? "Concert has been removed from your wishlist."
-        : "Concert has been added to your wishlist.");
-    } catch (error) {
-      console.error("Failed to update wishlist:", error);
-      window.alert("Unable to update wishlist. Please try again.");
-    }
-  }
-
   function changePage(next: number) {
 
     setPage(next);
@@ -1446,6 +1719,40 @@ export default function ExplorePage() {
 
 
 
+  // --- Wishlist toggle: persist changes through the backend ------------------
+  async function toggleWishlist(concert: Concert) {
+    const concertId = String(concert.id);
+    const exists = wishlistIds.includes(concertId);
+    const token = localStorage.getItem("token");
+    if (!token) { setWishlistToast("Please log in to use your wishlist."); return; }
+    try {
+      const response = await fetch(`${API_URL}/wishlist/${concertId}`, {
+        method: exists ? "DELETE" : "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        window.location.href = "/login";
+        return;
+      }
+      if (!response.ok) throw new Error(payload?.message || "Gagal memperbarui Wishlist.");
+      setWishlistIds((current) => exists
+        ? current.filter((id) => id !== concertId)
+        : [...new Set([...current, concertId])]);
+      window.dispatchEvent(new CustomEvent(WISHLIST_EVENT));
+      setWishlistToast(exists
+        ? "Concert has been removed from your wishlist."
+        : "Concert has been added to your wishlist.");
+    } catch (error) {
+      console.error("Failed to update wishlist:", error);
+      setWishlistToast(error instanceof Error ? error.message : "Unable to update wishlist. Please try again.");
+    }
+  }
+
+  // --- Render ----------------------------------------------------------------
+
   return (
 
     <CustomerShell
@@ -1454,25 +1761,12 @@ export default function ExplorePage() {
 
       subtitle="Find your next unforgettable experience"
 
-      search={{
-
-        value: search,
-
-        onChange: withReset(setSearch),
-
-        placeholder: "Search concerts, artists, or venues...",
-
-      }}
 
     >
 
-      <main className="mx-auto w-full max-w-[1320px] px-4 pb-12 pt-4 sm:px-6 sm:pt-5 lg:px-8">
+      <main className={s.main}>
 
         <ExploreHero
-
-          tab={tab}
-
-          onTab={withReset(setTab)}
 
           search={search}
 
@@ -1486,93 +1780,79 @@ export default function ExplorePage() {
 
 
 
-        {/* Filters: 2x2 on phones, one row on desktop */}
+        {/* Filters */}
 
-        <section className="mt-4 grid grid-cols-2 gap-3 sm:mt-5 lg:grid-cols-4 lg:gap-4">
+        <section aria-label="Concert filters" className={styles.filters.section}>
 
-          <FilterSelect
+          <FilterField title="Category">
 
-            value={category}
+            <FilterSelect
 
-            onChange={withReset(setCategory)}
+              value={category}
 
-            options={CATEGORY_OPTIONS}
+              onChange={withReset(setCategory)}
 
-            label="Filter by category"
+              options={CATEGORY_OPTIONS}
 
-            placeholder="Category"
+              label="Filter by category"
 
-            className={FIELD}
+              placeholder="All categories"
 
-            icon={<CategoryIcon />}
+              className={styles.filters.field}
 
-          />
+              icon={<CategoryIcon />}
 
-          <FilterSelect
+            />
 
-            value={country}
+          </FilterField>
 
-            onChange={withReset(setCountry)}
 
-            options={COUNTRY_OPTIONS}
 
-            label="Filter by artist country"
+          <FilterField title="Date">
 
-            placeholder="Country"
+            <FilterSelect
 
-            className={FIELD}
+              value={dateFilter}
 
-            icon={<img src="/icons/pin.png" alt="" className="h-5 w-5 shrink-0 object-contain" />}
+              onChange={withReset(setDateFilter)}
 
-          />
+              options={DATE_OPTIONS}
 
-          <FilterSelect
+              label="Filter by date"
 
-            value={dateFilter}
+              placeholder="Any date"
 
-            onChange={withReset(setDateFilter)}
+              className={styles.filters.field}
 
-            options={DATE_OPTIONS}
+              icon={<img src="/icons/calendar (1).png" alt="" className={styles.filters.dateIcon} />}
 
-            label="Filter by date"
+            />
 
-            placeholder="Date"
+          </FilterField>
 
-            className={FIELD}
 
-            icon={
 
-              <img
+          <FilterField title="Price">
 
-                src="/icons/calendar (1).png"
+            <FilterSelect
 
-                alt=""
+              value={priceFilter}
 
-                className="h-5 w-5 shrink-0 object-contain"
+              onChange={withReset(setPriceFilter)}
 
-              />
+              options={PRICE_OPTIONS}
 
-            }
+              label="Filter by price"
 
-          />
+              placeholder="Any price"
 
-          <FilterSelect
+              className={styles.filters.field}
 
-            value={priceFilter}
+              icon={<PriceIcon />}
 
-            onChange={withReset(setPriceFilter)}
+            />
 
-            options={PRICE_OPTIONS}
-
-            label="Filter by price"
-
-            placeholder="Price"
-
-            className={FIELD}
-
-            icon={<PriceIcon />}
-
-          />
+          </FilterField>
 
         </section>
 
@@ -1580,19 +1860,19 @@ export default function ExplorePage() {
 
         {/* Count + sort */}
 
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <div className={styles.toolbar.wrapper}>
 
-          <div className="flex items-center gap-3">
+          <div className={styles.toolbar.left}>
 
-            <span className="h-9 w-[6px] rounded-full bg-gradient-to-b from-[#3B82F6] to-[#8B5CF6]" />
+            <span className={styles.toolbar.bar} />
 
-            <h2 className="text-xl font-black text-white">{results.length} concerts</h2>
+            <h2 className={styles.toolbar.count}>{results.length} concerts</h2>
 
           </div>
 
 
 
-          <div className="flex items-center gap-3">
+          <div className={styles.toolbar.right}>
 
             <FilterSelect
 
@@ -1604,7 +1884,7 @@ export default function ExplorePage() {
 
               label="Sort concerts"
 
-              className="h-12 w-[170px] rounded-xl border border-white/10 bg-[#2A3150] sm:w-[200px]"
+              className={styles.toolbar.sort}
 
             />
 
@@ -1616,15 +1896,15 @@ export default function ExplorePage() {
 
         {/* Results */}
 
-        <section className="mt-5">
+        <section className={s.results}>
 
           {loading ? (
 
-            <div className={GRID}>
+            <div className={styles.grid}>
 
               {Array.from({ length: 8 }, (_, i) => (
 
-                <div key={i} className="h-[350px] animate-pulse rounded-xl bg-[#202A4F]" />
+                <div key={i} className={s.skeleton} />
 
               ))}
 
@@ -1634,7 +1914,7 @@ export default function ExplorePage() {
 
             <>
 
-              <div className={GRID}>
+              <div className={styles.grid}>
 
                 {visible.map((concert, index) => (
 
@@ -1678,11 +1958,11 @@ export default function ExplorePage() {
 
           ) : (
 
-            <div className="rounded-xl border border-white/10 bg-[#151E36] px-4 py-14 text-center">
+            <div className={s.emptyBox}>
 
-              <h3 className="text-lg font-extrabold text-white">No concerts found</h3>
+              <h3 className={s.emptyTitle}>No concerts found</h3>
 
-              <p className="mx-auto mt-1 max-w-md text-sm text-slate-400">
+              <p className={s.emptyText}>
 
                 Try a different keyword or loosen your filters to find more concerts.
 
@@ -1695,6 +1975,18 @@ export default function ExplorePage() {
         </section>
 
       </main>
+
+
+
+      {wishlistToast && (
+
+        <div role="status" aria-live="polite" className={s.toast}>
+
+          {wishlistToast}
+
+        </div>
+
+      )}
 
     </CustomerShell>
 

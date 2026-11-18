@@ -40,7 +40,7 @@ const categories = [
   { name: "METAL", image: "metal.jpg", count: "92 EVENTS" },
   { name: "FESTIVAL", image: "festival.jpg", count: "130 EVENTS" },
 ];
-
+4
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
 
