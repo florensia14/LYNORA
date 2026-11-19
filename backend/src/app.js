@@ -53,6 +53,7 @@ const ordersRoutes = require("./routes/ordersRoutes");
 const paymentsRoutes = require("./routes/paymentsRoutes");
 const notificationsRoutes = require("./routes/notificationsRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
+const ticketsRoutes = require("./routes/ticketsRoutes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/events", eventsRoutes);
@@ -60,6 +61,7 @@ app.use("/api/orders", ordersRoutes);
 app.use("/api/payments", paymentsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/wishlist", wishlistRoutes);
+app.use("/api/tickets", ticketsRoutes);
 
 // Upload Error Handler
 app.use((error, req, res, next) => {

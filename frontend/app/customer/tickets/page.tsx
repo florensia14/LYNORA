@@ -1,62 +1,73 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import CustomerShell from "@/components/layout/CustomerShell";
+import { fetchMyTickets, type ApiMyTicket } from "@/lib/api";
 
 const GRADIENT = "bg-[linear-gradient(90deg,#8B5CF6_0%,#22D3EE_31%)]";
 const GRADIENT_V = "bg-[linear-gradient(180deg,#8B5CF6_0%,#22D3EE_100%)]";
 
 type Tab = "active" | "history" | "cancelled";
 
-const mainTicket = {
-  readyLabel: "Ready To Use",
-  bookingId: "8170-FE-08D",
-  countdown: "03h : 16m : 22s",
-  tour: "2024 WORLD TOUR",
-  tier: "VIP TIER",
-  poster: "/images/concerts/event.png",
-  title: "IU 'H.E.R' WORLD TOUR -New York",
-  dateTime: "Sat, Apr 27, 2024 · 7:30 PM",
-  ticketNo: "Seat A-12",
-  category: "VIP Package",
-  venue: "Madison Square Garden, NYC",
-  gate: "Gate 2 VIP",
-  holder: "Kimberly Kimy",
-  qr: "/images/hero/qr%20code.png",
-  code: "EIP2-IU-VVIP",
-};
-
-const otherTickets = [
-  {
-    id: "o1",
-    title: "IU 'H.E.R' WORLD TOUR — New York",
-    thumb: "/images/concerts/eventt.png",
-    meta: "Saturday, April 27, 2024 · Madison Square Garden, New York",
-    tags: ["VIP Package", "Gate 2 VIP", "Seat A-12, A-13"],
-    remaining: "2 tickets remaining",
-    soon: true,
-  },
+const tabs: { key: Tab; label: string }[] = [
+  { key: "active", label: "Active Tickets" },
+  { key: "history", label: "History" },
+  { key: "cancelled", label: "Cancelled" },
 ];
 
-const history = [
-  {
-    id: "h1",
-    title: "Coldplay: Music of the Spheres",
-    image: "/images/concerts/coldplay.jpg",
-    date: "November 18, 2023",
-    venue: "MetLife Stadium, East Rutherford",
-    badge: "CAT 1 – West A",
-  },
-  {
-    id: "h2",
-    title: "Coldplay: Music of the Spheres",
-    image: "/images/concerts/coldplay.jpg",
-    date: "November 18, 2023",
-    venue: "MetLife Stadium, East Rutherford",
-    badge: "CAT 1 – West A",
-  },
-];
+function formatDate(date: string): string {
+  if (!date) return "-";
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) return date;
+
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function formatTime(date: string): string {
+  if (!date) return "";
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(parsed);
+}
+
+function formatDateTime(date: string): string {
+  const formattedDate = formatDate(date);
+  const formattedTime = formatTime(date);
+
+  return formattedTime
+    ? `${formattedDate} · ${formattedTime}`
+    : formattedDate;
+}
+
+function formatStatus(status: ApiMyTicket["ticket_status"]): string {
+  switch (status) {
+    case "valid":
+      return "Ready To Use";
+    case "used":
+      return "Completed";
+    case "cancelled":
+      return "Cancelled";
+    case "refunded":
+      return "Refunded";
+    default:
+      return status;
+  }
+}
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -67,7 +78,15 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
+  if (!value) return null;
+
   return (
     <div className="min-w-0">
       <p className="text-[11px] text-[#AAB0C5]">{label}</p>
@@ -78,66 +97,101 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MainTicketCard() {
-  const t = mainTicket;
+// MAIN TICKET CARD
+
+function MainTicketCard({ ticket }: { ticket: ApiMyTicket }) {
   return (
     <article className="overflow-hidden rounded-xl border border-[#676D89] bg-[#171B26]">
-      {/* status bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 text-[11px]">
-        <div className="flex items-center gap-3 text-[#72E08C]">
+      {/* Status bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-[11px]">
+        <div className="flex flex-wrap items-center gap-3 text-[#72E08C]">
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-[#72E08C]" />
-            {t.readyLabel}
+            {formatStatus(ticket.ticket_status)}
           </span>
+
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-[#72E08C]" />
-            Booking ID: {t.bookingId}
+            Booking ID: {ticket.order_code}
           </span>
         </div>
+
         <span className="text-[#AAB0C5]">
-          Countdown: <span className="font-semibold text-white">{t.countdown}</span>
+          Ticket:{" "}
+          <span className="font-semibold text-white">
+            {ticket.ticket_code}
+          </span>
         </span>
       </div>
 
-      {/* poster */}
-      <div className="relative mx-4 h-44 overflow-hidden rounded-lg">
+      {/* Poster */}
+      <div className="relative mx-4 h-44 overflow-hidden rounded-lg bg-[#0C1122]">
         <img
-          src={t.poster}
-          alt={t.title}
+          src={ticket.poster_url || "/images/hero/home.jpg"}
+          alt={ticket.event_name}
           className="h-full w-full object-cover"
           onError={(e) => {
             e.currentTarget.src = "/images/hero/home.jpg";
           }}
         />
+
         <div className="absolute inset-0 bg-gradient-to-t from-[#171B26]/90 via-transparent to-transparent" />
+
         <div className="absolute left-3 top-3 flex gap-2">
           <span className="rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-semibold text-[#171B26]">
-            {t.tour}
+            LYNORA E-TICKET
           </span>
+
           <span className="rounded-full bg-[#8B5CF6] px-2.5 py-0.5 text-[10px] font-semibold text-white">
-            {t.tier}
+            {ticket.category_name}
           </span>
         </div>
+
         <h3 className="absolute bottom-3 left-3 right-3 text-xl font-bold leading-tight text-white">
-          {t.title}
+          {ticket.event_name}
         </h3>
       </div>
 
-      {/* details */}
-      <div className="grid grid-cols-3 gap-x-4 gap-y-3 px-4 py-4">
-        <Field label="Date & Time" value={t.dateTime} />
-        <Field label="Ticket No." value={t.ticketNo} />
-        <Field label="Category" value={t.category} />
-        <Field label="Venue" value={t.venue} />
-        <Field label="Entry Gate" value={t.gate} />
-        <Field label="Ticket Holder" value={t.holder} />
+      {/* Ticket details */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 sm:grid-cols-3">
+        <Field
+          label="Date & Time"
+          value={formatDateTime(ticket.start_date)}
+        />
+
+        <Field
+          label="Ticket No."
+          value={ticket.ticket_code}
+        />
+
+        <Field
+          label="Category"
+          value={ticket.category_name}
+        />
+
+        <Field
+          label="Venue"
+          value={ticket.venue_name}
+        />
+
+        <Field
+          label="Venue Address"
+          value={ticket.venue_address}
+        />
+
+        <Field
+          label="Booking ID"
+          value={ticket.order_code}
+        />
       </div>
 
-      {/* actions */}
-      <div className="flex items-center gap-2 px-4 pb-3">
+      {/* Actions */}
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
         <button
           type="button"
-          className="flex items-center gap-1.5 rounded-md bg-[#5456DE] px-3 py-2 text-xs font-semibold text-white transition hover:brightness-110"
+          disabled
+          title="Fitur PDF akan tersedia setelah endpoint e-ticket dibuat"
+          className="flex cursor-not-allowed items-center gap-1.5 rounded-md bg-[#5456DE]/60 px-3 py-2 text-xs font-semibold text-white/70"
         >
           <img
             src="/icons/direct-download.png"
@@ -146,27 +200,29 @@ function MainTicketCard() {
           />
           Download E-Ticket (PDF)
         </button>
+
         <button
           type="button"
-          className="rounded-md border border-[#676D89] bg-[#0C1122] px-3 py-2 text-xs font-semibold text-white transition hover:border-white/60"
+          disabled
+          className="cursor-not-allowed rounded-md border border-[#676D89] bg-[#0C1122] px-3 py-2 text-xs font-semibold text-white/50"
         >
           Add to Wallet
         </button>
       </div>
 
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 border-t border-[#676D89]/60 px-4 py-3 text-xs font-medium text-white transition hover:bg-white/5"
-      >
-        <span aria-hidden className="text-base leading-none">≡</span>
-        View Full Rundown
-      </button>
+      <div className="flex w-full items-center gap-2 border-t border-[#676D89]/60 px-4 py-3 text-xs font-medium text-white">
+        <span aria-hidden className="text-base leading-none">
+          ≡
+        </span>
+        Ticket Information
+      </div>
     </article>
   );
 }
 
-function QrCard() {
-  const t = mainTicket;
+// QR CARD
+
+function QrCard({ ticket }: { ticket: ApiMyTicket }) {
   return (
     <aside className="flex flex-col items-center rounded-xl border border-[#676D89] bg-[#171B26] px-6 py-4">
       <div className="flex w-full items-center justify-between text-[10px]">
@@ -174,77 +230,99 @@ function QrCard() {
           <span className="h-1.5 w-1.5 rounded-full bg-[#72E08C]" />
           OFFICIAL PASS
         </span>
-        <span className="font-semibold text-white">SECURE QR VALIDATION</span>
+
+        <span className="font-semibold text-white">
+          SECURE QR VALIDATION
+        </span>
       </div>
 
-      <div className="mt-5 rounded-lg bg-white p-3">
-        <img
-          src={t.qr}
-          alt={`QR code ${t.code}`}
-          className="h-52 w-52 object-contain"
-        />
+      <div className="mt-5 flex h-[232px] w-[232px] flex-col items-center justify-center rounded-lg border border-dashed border-[#676D89] bg-white p-5 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#8B5CF6]/10">
+          <span className="text-3xl text-[#8B5CF6]">▦</span>
+        </div>
+
+        <p className="mt-3 text-sm font-bold text-[#171B26]">
+          QR Code Unavailable
+        </p>
+
+        <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+          Your secure ticket QR code will appear here once verification is enabled.
+        </p>
       </div>
 
       <p className="mt-4 text-center text-[11px] leading-relaxed text-[#AAB0C5]">
-        <span className="font-semibold text-[#72E08C]">Anti-screenshot barcode active.</span>
+        <span className="font-semibold text-[#72E08C]">
+          Official LYNORA Ticket
+        </span>
         <br />
-        Show this QR code to the gate staff for scanning.
+        Ticket QR validation is currently being prepared.
       </p>
 
-      <div className="mt-4 rounded-full border border-[#676D89] bg-[#0C1122] px-8 py-2 text-xs font-semibold tracking-wide text-white">
-        CODE: {t.code}
+      <div className="mt-4 max-w-full truncate rounded-full border border-[#676D89] bg-[#0C1122] px-6 py-2 text-xs font-semibold tracking-wide text-white">
+        CODE: {ticket.ticket_code}
       </div>
     </aside>
   );
 }
 
-function OtherTicketRow() {
+// OTHER ACTIVE TICKETS
+
+function OtherTicketRow({
+  tickets,
+}: {
+  tickets: ApiMyTicket[];
+}) {
   return (
     <div className="space-y-4">
-      {otherTickets.map((o) => (
+      {tickets.map((ticket) => (
         <article
-          key={o.id}
+          key={ticket.ticket_id}
           className="overflow-hidden rounded-xl border border-[#676D89] bg-[#171B26]"
         >
           <div className="flex items-start gap-4 p-4">
             <img
-              src={o.thumb}
-              alt=""
+              src={ticket.poster_url || "/images/hero/home.jpg"}
+              alt={ticket.event_name}
               className="h-14 w-14 shrink-0 rounded-md object-cover"
+              onError={(e) => {
+                e.currentTarget.src = "/images/hero/home.jpg";
+              }}
             />
+
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-sm font-semibold text-white">
-                {o.title}
+                {ticket.event_name}
               </h3>
-              <p className="mt-1 text-[11px] text-[#AAB0C5]">{o.meta}</p>
+
+              <p className="mt-1 text-[11px] text-[#AAB0C5]">
+                {formatDate(ticket.start_date)}
+                {ticket.venue_name ? ` · ${ticket.venue_name}` : ""}
+              </p>
+
               <div className="mt-2 flex flex-wrap gap-2">
-                {o.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded border border-[#676D89] bg-[#0C1122] px-2 py-0.5 text-[10px] text-[#AAB0C5]"
-                  >
-                    {tag}
-                  </span>
-                ))}
+                <span className="rounded border border-[#676D89] bg-[#0C1122] px-2 py-0.5 text-[10px] text-[#AAB0C5]">
+                  {ticket.category_name}
+                </span>
+
+                <span className="rounded border border-[#676D89] bg-[#0C1122] px-2 py-0.5 text-[10px] text-[#AAB0C5]">
+                  {ticket.ticket_code}
+                </span>
               </div>
             </div>
-            {o.soon && (
-              <span className="shrink-0 rounded-full bg-[#2E2723] px-2.5 py-1 text-[10px] font-semibold text-[#F5B84E]">
-                COMING SOON
-              </span>
-            )}
+
+            <span className="shrink-0 rounded-full bg-[#152B32] px-2.5 py-1 text-[10px] font-semibold text-[#26ADA0]">
+              ACTIVE
+            </span>
           </div>
 
           <div className="flex items-center justify-between border-t border-[#676D89]/60 px-4 py-3">
             <span className="rounded-md bg-[#0C1122] px-3 py-1.5 text-xs font-medium text-white">
-              {o.remaining}
+              {ticket.order_code}
             </span>
-            <button
-              type="button"
-              className="rounded-md bg-[#8B5CF6] px-4 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
-            >
-              Open Ticket →
-            </button>
+
+            <span className="text-xs font-semibold text-[#AAB0C5]">
+              {ticket.category_name}
+            </span>
           </div>
         </article>
       ))}
@@ -252,46 +330,60 @@ function OtherTicketRow() {
   );
 }
 
-function HistoryGrid() {
+// HISTORY GRID
+
+function HistoryGrid({
+  tickets,
+}: {
+  tickets: ApiMyTicket[];
+}) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      {history.map((h) => (
+      {tickets.map((ticket) => (
         <article
-          key={h.id}
+          key={ticket.ticket_id}
           className="overflow-hidden rounded-xl border border-[#676D89] bg-[#171B26]"
         >
-          <div className="relative h-36">
+          <div className="relative h-36 bg-[#0C1122]">
             <img
-              src={h.image}
-              alt={h.title}
+              src={ticket.poster_url || "/images/hero/home.jpg"}
+              alt={ticket.event_name}
               className="h-full w-full object-cover"
+              onError={(e) => {
+                e.currentTarget.src = "/images/hero/home.jpg";
+              }}
             />
+
             <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
               Completed
             </span>
+
             <span className="absolute right-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
-              {h.badge}
+              {ticket.category_name}
             </span>
           </div>
+
           <div className="space-y-2 p-3">
-            <h3 className="text-sm font-semibold text-white">{h.title}</h3>
-            <p className="text-[11px] text-[#AAB0C5]">{h.date}</p>
-            <p className="text-[11px] text-[#AAB0C5]">{h.venue}</p>
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                type="button"
-                disabled
-                className="rounded-md border border-[#676D89] bg-[#0C1122] py-1.5 text-[11px] text-[#AAB0C5]"
-              >
-                Leave a Review
-              </button>
-              <button
-                type="button"
-                disabled
-                className="rounded-md border border-[#676D89] bg-[#0C1122] py-1.5 text-[11px] text-[#AAB0C5]"
-              >
-                View Invoice
-              </button>
+            <h3 className="text-sm font-semibold text-white">
+              {ticket.event_name}
+            </h3>
+
+            <p className="text-[11px] text-[#AAB0C5]">
+              {formatDate(ticket.start_date)}
+            </p>
+
+            <p className="text-[11px] text-[#AAB0C5]">
+              {ticket.venue_name || "Venue information unavailable"}
+            </p>
+
+            <div className="flex items-center justify-between gap-2 border-t border-[#676D89]/60 pt-3">
+              <span className="truncate text-[10px] text-[#AAB0C5]">
+                {ticket.ticket_code}
+              </span>
+
+              <span className="shrink-0 rounded-full bg-[#2E2723] px-2.5 py-1 text-[10px] font-semibold text-[#F5B84E]">
+                USED
+              </span>
             </div>
           </div>
         </article>
@@ -300,40 +392,149 @@ function HistoryGrid() {
   );
 }
 
+// CANCELLED TICKET LIST
+
+function CancelledTickets({
+  tickets,
+}: {
+  tickets: ApiMyTicket[];
+}) {
+  return (
+    <div className="space-y-4">
+      {tickets.map((ticket) => (
+        <article
+          key={ticket.ticket_id}
+          className="flex items-center gap-4 rounded-xl border border-[#676D89] bg-[#171B26] p-4"
+        >
+          <img
+            src={ticket.poster_url || "/images/hero/home.jpg"}
+            alt={ticket.event_name}
+            className="h-14 w-14 shrink-0 rounded-md object-cover opacity-60"
+            onError={(e) => {
+              e.currentTarget.src = "/images/hero/home.jpg";
+            }}
+          />
+
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold text-white">
+              {ticket.event_name}
+            </h3>
+
+            <p className="mt-1 text-[11px] text-[#AAB0C5]">
+              {ticket.category_name} · {ticket.ticket_code}
+            </p>
+
+            <p className="mt-1 text-[11px] text-[#AAB0C5]">
+              {formatDate(ticket.start_date)}
+            </p>
+          </div>
+
+          <span className="shrink-0 rounded-full bg-[#2F1E2A] px-2.5 py-1 text-[10px] font-semibold text-[#FF6B81]">
+            {ticket.ticket_status === "refunded" ? "REFUNDED" : "CANCELLED"}
+          </span>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+// EMPTY STATE
+
 function EmptyState({ message }: { message: string }) {
   return (
     <div className="flex flex-col items-center rounded-xl border border-dashed border-[#676D89] bg-[#171B26] px-6 py-14 text-center">
-      <img src="/icons/ticket.png" alt="" className="h-10 w-10 opacity-70" />
-      <h3 className="mt-4 text-base font-semibold text-white">{message}</h3>
+      <img
+        src="/icons/ticket.png"
+        alt=""
+        className="h-10 w-10 opacity-70"
+      />
+
+      <h3 className="mt-4 text-base font-semibold text-white">
+        {message}
+      </h3>
+
       <p className="mt-1 max-w-sm text-sm text-[#AAB0C5]">
-        Tiket yang sudah kamu beli akan muncul di sini beserta e-ticket yang
-        siap diunduh.
+       Your purchased tickets will appear here along with their available e-ticket information.
       </p>
+
       <Link
         href="/customer/explore"
         className="mt-5 rounded-md bg-[#8B5CF6] px-5 py-2 text-sm font-semibold text-white transition hover:brightness-110"
       >
-        Beli Tiket
+        Buy Tickets
       </Link>
     </div>
   );
 }
 
-const tabs: { key: Tab; label: string }[] = [
-  { key: "active", label: "Active Tickets" },
-  { key: "history", label: "History" },
-  { key: "cancelled", label: "Cancelled" },
-];
+// MAIN PAGE
 
 export default function MyTicketsPage() {
   const [tab, setTab] = useState<Tab>("active");
+
+  const [tickets, setTickets] = useState<ApiMyTicket[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTickets() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const result = await fetchMyTickets();
+
+        if (isMounted) {
+          setTickets(result);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Gagal mengambil data tiket."
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadTickets();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const activeTickets = tickets.filter(
+    (ticket) => ticket.ticket_status === "valid"
+  );
+
+  const historyTickets = tickets.filter(
+    (ticket) => ticket.ticket_status === "used"
+  );
+
+  const cancelledTickets = tickets.filter(
+    (ticket) =>
+      ticket.ticket_status === "cancelled" ||
+      ticket.ticket_status === "refunded"
+  );
+
+  const mainTicket = activeTickets[0];
+  const otherActiveTickets = activeTickets.slice(1);
 
   return (
     <CustomerShell
       title="My Tickets"
       subtitle="E-ticket dan riwayat tiket konsermu"
     >
-      {/* heading + tabs */}
+      {/* HEADING + TABS */}
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p
@@ -341,7 +542,10 @@ export default function MyTicketsPage() {
           >
             LYNORA PASSWORD
           </p>
-          <h1 className="mt-1 text-3xl font-extrabold text-white">MY TICKETS</h1>
+
+          <h1 className="mt-1 text-3xl font-extrabold text-white">
+            MY TICKETS
+          </h1>
         </div>
 
         <div className="flex gap-2">
@@ -362,41 +566,110 @@ export default function MyTicketsPage() {
         </div>
       </div>
 
-      {tab === "active" && (
-        <>
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1.35fr_1fr]">
-            <MainTicketCard />
-            <QrCard />
-          </div>
+      {/* LOADING */}
 
-          <section className="mt-10 space-y-4">
-            <SectionTitle>Other Active Tickets</SectionTitle>
-            <OtherTicketRow />
-          </section>
+      {loading && (
+        <div className="mt-8 flex flex-col items-center justify-center rounded-xl border border-[#676D89] bg-[#171B26] py-16">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#676D89] border-t-[#8B5CF6]" />
+
+          <p className="mt-4 text-sm text-[#AAB0C5]">
+            Loading your tickets...
+          </p>
+        </div>
+      )}
+
+      {/* ERROR */}
+
+      {!loading && error && (
+        <div className="mt-6 rounded-xl border border-[#FF6B81]/40 bg-[#2F1E2A] p-5">
+          <h3 className="text-sm font-semibold text-[#FF6B81]">
+            Failed to Load Tickets
+          </h3>
+
+          <p className="mt-2 text-xs text-[#AAB0C5]">
+            {error}
+          </p>
+
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-4 rounded-md bg-[#8B5CF6] px-4 py-2 text-xs font-semibold text-white transition hover:brightness-110"
+          >
+            Try Again
+          </button>
+        </div>
+      )}
+
+      {/* ACTIVE TICKETS */}
+
+      {!loading && !error && tab === "active" && (
+        <>
+          {activeTickets.length === 0 ? (
+            <div className="mt-6">
+              <EmptyState message="	No Active Tickets Yet" />
+            </div>
+          ) : (
+            <>
+              <div className="mt-6 grid gap-4 lg:grid-cols-[1.35fr_1fr]">
+                <MainTicketCard ticket={mainTicket} />
+                <QrCard ticket={mainTicket} />
+              </div>
+
+              {otherActiveTickets.length > 0 && (
+                <section className="mt-10 space-y-4">
+                  <SectionTitle>Other Active Tickets</SectionTitle>
+
+                  <OtherTicketRow tickets={otherActiveTickets} />
+                </section>
+              )}
+            </>
+          )}
 
           <section className="mt-10 space-y-1">
             <SectionTitle>Concert History</SectionTitle>
+
             <p className="pb-3 pl-4 text-xs text-[#AAB0C5]">
               A record of the concerts you&apos;ve attended with LYNORA.
             </p>
-            <HistoryGrid />
+
+            {historyTickets.length > 0 ? (
+              <HistoryGrid tickets={historyTickets.slice(0, 2)} />
+            ) : (
+              <p className="pl-4 text-xs text-[#AAB0C5]">
+                No Concert History Yet
+              </p>
+            )}
           </section>
         </>
       )}
 
-      {tab === "history" && (
+      {/* HISTORY */}
+
+      {!loading && !error && tab === "history" && (
         <section className="mt-6 space-y-1">
           <SectionTitle>Concert History</SectionTitle>
+
           <p className="pb-3 pl-4 text-xs text-[#AAB0C5]">
             A record of the concerts you&apos;ve attended with LYNORA.
           </p>
-          <HistoryGrid />
+
+          {historyTickets.length > 0 ? (
+            <HistoryGrid tickets={historyTickets} />
+          ) : (
+            <EmptyState message="No Concert History Yet" />
+          )}
         </section>
       )}
 
-      {tab === "cancelled" && (
+      {/* CANCELLED */}
+
+      {!loading && !error && tab === "cancelled" && (
         <div className="mt-6">
-          <EmptyState message="Belum ada tiket dibatalkan" />
+          {cancelledTickets.length > 0 ? (
+            <CancelledTickets tickets={cancelledTickets} />
+          ) : (
+            <EmptyState message="No Cancelled Tickets Yet" />
+          )}
         </div>
       )}
     </CustomerShell>

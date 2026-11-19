@@ -70,7 +70,7 @@ export type Concert = {
   }[];
 };
 
-export type TicketStatus = "active" | "used" | "expired";
+export type TicketStatus = "active" | "used" | "cancelled";
 
 export type Ticket = {
   id: string;
@@ -470,6 +470,5 @@ export const orderStatusLabel: Record<OrderStatus, string> = {
 export const ticketStatusLabel: Record<TicketStatus, string> = {
   active: "Active",
   used: "Used",
-  expired: "Expired",
+  cancelled: "Cancelled",
 };
-

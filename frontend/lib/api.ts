@@ -12,6 +12,37 @@ type EventsResponse = {
   total?: number;
   events?: ApiEvent[];
 };
+export type ApiMyTicket = {
+  ticket_id: number;
+  ticket_code: string;
+  ticket_status: "valid" | "used" | "cancelled" | "refunded";
+  issued_at: string;
+
+  order_id: number;
+  order_code: string;
+  order_status: string;
+
+  quantity: number;
+  price_at_purchase: number | string;
+
+  ticket_category_id: number;
+  category_name: string;
+
+  event_id: number;
+  event_name: string;
+  start_date: string;
+  end_date: string;
+  poster_url: string | null;
+
+  venue_name: string | null;
+  venue_address: string | null;
+};
+
+type MyTicketsResponse = {
+  success: boolean;
+  message: string;
+  data: ApiMyTicket[];
+};
 
 function numeric(value: unknown): number | undefined {
   if (value === null || value === undefined || value === "") return undefined;
@@ -76,6 +107,54 @@ export async function fetchConcerts(): Promise<Concert[]> {
   }
 
   return payload.events.map(normalizeEvent);
+}
+
+/**
+ * Loads tickets belonging to the currently authenticated customer.
+ * GET /api/tickets/my-tickets
+ */
+export async function fetchMyTickets(): Promise<ApiMyTicket[]> {
+  const token = localStorage.getItem("token");
+
+  if (!token) {
+    throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+  }
+
+  const response = await fetch(`${API_URL}/tickets/my-tickets`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    cache: "no-store",
+  });
+
+  let payload: MyTicketsResponse;
+
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error("Respons server tiket tidak valid.");
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      payload.message || `Gagal mengambil tiket (HTTP ${response.status}).`
+    );
+  }
+
+  if (!Array.isArray(payload.data)) {
+    throw new Error(
+      "Format respons GET /api/tickets/my-tickets tidak sesuai."
+    );
+  }
+
+  return payload.data.map((ticket) => ({
+    ...ticket,
+    poster_url: ticket.poster_url
+      ? imageUrl(ticket.poster_url)
+      : null,
+  }));
 }
 
 export function matchesQuery(concert: Concert, query: string): boolean {
