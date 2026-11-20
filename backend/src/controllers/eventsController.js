@@ -1492,6 +1492,571 @@ async function unpublishEvent(req, res) {
 }
 
 // ======================================================
+// TEMPEL DI BAWAH eventsController.js (sebelum module.exports)
+// lalu tambahkan getOrganizerDashboard dan getOrganizerConcerts
+// ke dalam module.exports. `db` sudah di-require di file itu.
+// ======================================================
+
+// ======================================================
+// HELPERS
+// ======================================================
+
+// Waktu pembayaran: pakai settled_at dari Midtrans, fallback ke updated_at order.
+const PAID_AT = "COALESCE(p.settled_at, o.updated_at)";
+
+// Semua item order yang sudah dibayar untuk konser milik 1 organizer.
+const PAID_FROM = `
+  FROM order_items oi
+  JOIN orders o
+    ON o.id = oi.order_id AND o.status = 'paid'
+  JOIN ticket_categories tc
+    ON tc.id = oi.ticket_category_id
+  JOIN events e
+    ON e.id = tc.event_id
+  LEFT JOIN payments p
+    ON p.order_id = o.id
+  WHERE e.organizer_id = ?`;
+
+const CHECKIN_FROM = `
+  FROM check_ins ci
+  JOIN tickets t ON t.id = ci.ticket_id
+  JOIN order_items oi ON oi.id = t.order_item_id
+  JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+  JOIN events e ON e.id = tc.event_id`;
+
+const RANGES = {
+  day: { unit: "hour", count: 24 },
+  week: { unit: "day", count: 7 },
+  month: { unit: "day", count: 30 },
+  year: { unit: "month", count: 12 },
+};
+
+async function query(sql, params = []) {
+  const [rows] = await db.execute(sql, params);
+  return rows;
+}
+
+function pad(n) {
+  return String(n).padStart(2, "0");
+}
+
+function bucketKey(date, unit) {
+  const month = `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
+  if (unit === "month") return month;
+
+  const day = `${month}-${pad(date.getDate())}`;
+  return unit === "day" ? day : `${day} ${pad(date.getHours())}`;
+}
+
+function bucketLabel(date, unit) {
+  if (unit === "hour") return `${pad(date.getHours())}:00`;
+  if (unit === "month") {
+    return date.toLocaleDateString("en-GB", { month: "short" });
+  }
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function buildBuckets(range) {
+  const { unit, count } = RANGES[range];
+  const now = new Date();
+  const buckets = [];
+
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(now);
+
+    if (unit === "hour") {
+      d.setMinutes(0, 0, 0);
+      d.setHours(now.getHours() - i);
+    } else if (unit === "day") {
+      d.setHours(0, 0, 0, 0);
+      d.setDate(now.getDate() - i);
+    } else {
+      d.setHours(0, 0, 0, 0);
+      d.setDate(1);
+      d.setMonth(now.getMonth() - i);
+    }
+
+    buckets.push({
+      date: d,
+      key: bucketKey(d, unit),
+      label: bucketLabel(d, unit),
+    });
+  }
+
+  return buckets;
+}
+
+function percentChange(current, previous) {
+  if (!previous) return null;
+  return Math.round(((current - previous) / previous) * 1000) / 10;
+}
+
+function paymentLabel(type, bank) {
+  if (type === "bank_transfer") {
+    return bank ? `${String(bank).toUpperCase()} Virtual Account` : "Bank Transfer";
+  }
+
+  const labels = {
+    echannel: "Mandiri Bill",
+    gopay: "GoPay",
+    qris: "QRIS",
+    credit_card: "Credit Card",
+    shopeepay: "ShopeePay",
+    cstore: "Convenience Store",
+    akulaku: "Akulaku",
+  };
+
+  return labels[type] || type;
+}
+
+// Status yang ditampilkan di UI organizer.
+function getDisplayStatus(row) {
+  const now = Date.now();
+
+  if (row.approval_status === "rejected") return "Rejected";
+
+  if (row.approval_status !== "approved") return "Pending";
+
+  if (row.publication_status !== "published") return "Approved";
+
+  if (new Date(row.end_date).getTime() < now) return "Completed";
+  if (new Date(row.start_date).getTime() <= now) return "Ongoing";
+
+  return "Published";
+}
+
+// Daftar konser organizer lengkap dengan tiket terjual, kuota, dan revenue.
+async function fetchConcertRows(organizerId, limit) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
+
+  const rows = await query(
+    `SELECT
+       e.id,
+       e.name,
+       e.poster_url,
+       e.start_date,
+       e.end_date,
+       e.approval_status,
+       e.publication_status,
+       v.name AS venue_name,
+       v.address AS venue_address,
+       c.name AS category_name,
+       COALESCE(q.quota, 0) AS quota,
+       COALESCE(s.sold, 0) AS sold,
+       COALESCE(s.revenue, 0) AS revenue
+     FROM events e
+     JOIN venues v ON v.id = e.venue_id
+     JOIN categories c ON c.id = e.category_id
+     LEFT JOIN (
+       SELECT event_id, SUM(quota) AS quota
+       FROM ticket_categories
+       GROUP BY event_id
+     ) q ON q.event_id = e.id
+     LEFT JOIN (
+       SELECT
+         tc.event_id,
+         SUM(oi.quantity) AS sold,
+         SUM(oi.subtotal) AS revenue
+       FROM order_items oi
+       JOIN orders o
+         ON o.id = oi.order_id AND o.status = 'paid'
+       JOIN ticket_categories tc
+         ON tc.id = oi.ticket_category_id
+       GROUP BY tc.event_id
+     ) s ON s.event_id = e.id
+     WHERE e.organizer_id = ?
+     ORDER BY e.created_at DESC
+     LIMIT ${safeLimit}`,
+    [organizerId]
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    poster_url: row.poster_url,
+    start_date: row.start_date,
+    end_date: row.end_date,
+    venue_name: row.venue_name,
+    venue_address: row.venue_address,
+    category_name: row.category_name,
+    quota: Number(row.quota),
+    sold: Number(row.sold),
+    revenue: Number(row.revenue),
+    approval_status: row.approval_status,
+    publication_status: row.publication_status,
+    display_status: getDisplayStatus(row),
+  }));
+}
+
+async function fetchRecentActivity(organizerId) {
+  const [orders, checkIns, approvals] = await Promise.all([
+    query(
+      `SELECT
+         o.order_code,
+         ${PAID_AT} AS at,
+         SUM(oi.quantity) AS qty,
+         MIN(e.name) AS event_name
+       ${PAID_FROM}
+       GROUP BY o.id, o.order_code, p.settled_at, o.updated_at
+       ORDER BY at DESC
+       LIMIT 6`,
+      [organizerId]
+    ),
+    query(
+      `SELECT
+         t.ticket_code,
+         ci.checked_at AS at,
+         e.name AS event_name
+       ${CHECKIN_FROM}
+       WHERE e.organizer_id = ?
+       ORDER BY ci.checked_at DESC
+       LIMIT 6`,
+      [organizerId]
+    ),
+    query(
+      `SELECT name AS event_name, approval_status, updated_at AS at
+       FROM events
+       WHERE organizer_id = ?
+         AND approval_status IN ('approved', 'rejected')
+       ORDER BY updated_at DESC
+       LIMIT 4`,
+      [organizerId]
+    ),
+  ]);
+
+  const items = [
+    ...orders.map((r) => ({
+      type: "order",
+      title: "New Order",
+      description: `${r.order_code} · ${Number(r.qty)} tiket · ${r.event_name}`,
+      at: r.at,
+    })),
+    ...checkIns.map((r) => ({
+      type: "check_in",
+      title: "Check-in Successful",
+      description: `${r.ticket_code} · ${r.event_name}`,
+      at: r.at,
+    })),
+    ...approvals.map((r) => ({
+      type: r.approval_status === "approved" ? "approved" : "rejected",
+      title:
+        r.approval_status === "approved"
+          ? "Concert Approved"
+          : "Concert Rejected",
+      description: r.event_name,
+      at: r.at,
+    })),
+  ];
+
+  return items
+    .filter((item) => item.at)
+    .sort((a, b) => new Date(b.at) - new Date(a.at))
+    .slice(0, 6)
+    .map((item) => ({ ...item, at: new Date(item.at).toISOString() }));
+}
+
+// ======================================================
+// GET /api/events/organizer/dashboard?range=day|week|month|year
+// ======================================================
+
+async function getOrganizerDashboard(req, res) {
+  try {
+    const organizerId = req.user?.id;
+
+    if (!organizerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const range = RANGES[req.query.range] ? req.query.range : "week";
+    const buckets = buildBuckets(range);
+    const start = buckets[0].date;
+    const prevStart = new Date(start.getTime() - (Date.now() - start.getTime()));
+    const { unit } = RANGES[range];
+    const dateFormat =
+      unit === "month" ? "%Y-%m" : unit === "day" ? "%Y-%m-%d" : "%Y-%m-%d %H";
+
+    const [
+      eventRows,
+      salesRows,
+      checkInRows,
+      trendRows,
+      periodRows,
+      upcomingRows,
+      paymentRows,
+      concerts,
+      recentActivity,
+    ] = await Promise.all([
+      query(
+        `SELECT
+           COUNT(*) AS total,
+           COALESCE(SUM(
+             approval_status = 'approved'
+             AND publication_status = 'published'
+             AND start_date <= NOW()
+             AND end_date >= NOW()
+           ), 0) AS active
+         FROM events
+         WHERE organizer_id = ?`,
+        [organizerId]
+      ),
+
+      query(
+        `SELECT
+           COALESCE(SUM(oi.quantity), 0) AS tickets_sold,
+           COALESCE(SUM(oi.subtotal), 0) AS revenue
+         ${PAID_FROM}`,
+        [organizerId]
+      ),
+
+      query(
+        `SELECT COUNT(*) AS total
+         ${CHECKIN_FROM}
+         WHERE e.organizer_id = ?`,
+        [organizerId]
+      ),
+
+      query(
+        `SELECT
+           DATE_FORMAT(${PAID_AT}, '${dateFormat}') AS bucket,
+           SUM(oi.quantity) AS tickets,
+           SUM(oi.subtotal) AS revenue
+         ${PAID_FROM}
+           AND ${PAID_AT} >= ?
+         GROUP BY bucket`,
+        [organizerId, start]
+      ),
+
+      query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN ${PAID_AT} >= ? THEN oi.quantity END), 0) AS cur_tickets,
+           COALESCE(SUM(CASE WHEN ${PAID_AT} >= ? THEN oi.subtotal END), 0) AS cur_revenue,
+           COALESCE(SUM(CASE WHEN ${PAID_AT} < ? THEN oi.quantity END), 0) AS prev_tickets,
+           COALESCE(SUM(CASE WHEN ${PAID_AT} < ? THEN oi.subtotal END), 0) AS prev_revenue
+         ${PAID_FROM}
+           AND ${PAID_AT} >= ?`,
+        [start, start, start, start, organizerId, prevStart]
+      ),
+
+      query(
+        `SELECT
+           e.id,
+           e.name,
+           e.poster_url,
+           e.start_date,
+           v.name AS venue_name,
+           v.address AS venue_address,
+           c.name AS category_name,
+           (
+             SELECT GROUP_CONCAT(a.name SEPARATOR ', ')
+             FROM event_artists ea
+             JOIN artists a ON a.id = ea.artist_id
+             WHERE ea.event_id = e.id
+           ) AS artists,
+           (
+             SELECT COALESCE(SUM(quota), 0)
+             FROM ticket_categories
+             WHERE event_id = e.id
+           ) AS quota,
+           (
+             SELECT COALESCE(SUM(oi.quantity), 0)
+             FROM order_items oi
+             JOIN orders o
+               ON o.id = oi.order_id AND o.status = 'paid'
+             JOIN ticket_categories tc
+               ON tc.id = oi.ticket_category_id
+             WHERE tc.event_id = e.id
+           ) AS sold
+         FROM events e
+         JOIN venues v ON v.id = e.venue_id
+         JOIN categories c ON c.id = e.category_id
+         WHERE e.organizer_id = ?
+           AND e.approval_status = 'approved'
+           AND e.publication_status = 'published'
+           AND e.start_date > NOW()
+         ORDER BY e.start_date ASC
+         LIMIT 1`,
+        [organizerId]
+      ),
+
+      query(
+        `SELECT
+           p.payment_type,
+           JSON_UNQUOTE(JSON_EXTRACT(p.midtrans_response, '$.va_numbers[0].bank')) AS bank,
+           COUNT(DISTINCT o.id) AS total
+         FROM orders o
+         JOIN payments p ON p.order_id = o.id
+         JOIN order_items oi ON oi.order_id = o.id
+         JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+         JOIN events e ON e.id = tc.event_id
+         WHERE e.organizer_id = ?
+           AND o.status = 'paid'
+           AND p.payment_type IS NOT NULL
+         GROUP BY p.payment_type, bank
+         ORDER BY total DESC`,
+        [organizerId]
+      ),
+
+      fetchConcertRows(organizerId, 50),
+      fetchRecentActivity(organizerId),
+    ]);
+
+    // ---- Stats ----
+    const ticketsSold = Number(salesRows[0].tickets_sold);
+    const grossRevenue = Number(salesRows[0].revenue);
+    const checkedIn = Number(checkInRows[0].total);
+    const period = periodRows[0];
+
+    // ---- Trend (isi bucket kosong dengan 0) ----
+    const trendMap = new Map(
+      trendRows.map((r) => [
+        r.bucket,
+        { tickets: Number(r.tickets), revenue: Number(r.revenue) },
+      ])
+    );
+
+    const trend = buckets.map((b) => ({
+      label: b.label,
+      tickets: trendMap.get(b.key)?.tickets ?? 0,
+      revenue: trendMap.get(b.key)?.revenue ?? 0,
+    }));
+
+    // ---- Upcoming ----
+    const up = upcomingRows[0];
+    const upcoming = up
+      ? {
+          id: up.id,
+          name: up.name,
+          poster_url: up.poster_url,
+          start_date: up.start_date,
+          venue_name: up.venue_name,
+          venue_address: up.venue_address,
+          category_name: up.category_name,
+          artists: up.artists || "",
+          quota: Number(up.quota),
+          sold: Number(up.sold),
+        }
+      : null;
+
+    // ---- Payment methods ----
+    const paymentTotal = paymentRows.reduce((sum, r) => sum + Number(r.total), 0);
+    const paymentMethods = paymentRows.map((r) => ({
+      label: paymentLabel(r.payment_type, r.bank),
+      count: Number(r.total),
+      percent: paymentTotal
+        ? Math.round((Number(r.total) / paymentTotal) * 1000) / 10
+        : 0,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      range,
+      stats: {
+        total_concerts: Number(eventRows[0].total),
+        active_concerts: Number(eventRows[0].active),
+        tickets_sold: ticketsSold,
+        tickets_checked_in: checkedIn,
+        gross_revenue: grossRevenue,
+        tickets_sold_change: percentChange(
+          Number(period.cur_tickets),
+          Number(period.prev_tickets)
+        ),
+        revenue_change: percentChange(
+          Number(period.cur_revenue),
+          Number(period.prev_revenue)
+        ),
+      },
+      trend,
+      attendance: {
+        checked_in: checkedIn,
+        not_checked_in: Math.max(ticketsSold - checkedIn, 0),
+        total: ticketsSold,
+        rate: ticketsSold
+          ? Math.round((checkedIn / ticketsSold) * 1000) / 10
+          : 0,
+      },
+      upcoming,
+      recent_activity: recentActivity,
+      concerts,
+      payment_methods: paymentMethods,
+      // Belum ada tabel withdraw/payout, jadi saldo = total revenue yang sudah dibayar.
+      balance: { available: grossRevenue },
+    });
+  } catch (error) {
+    console.error("Get organizer dashboard error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil data dashboard",
+    });
+  }
+}
+
+// ======================================================
+// GET /api/events/organizer/concerts
+// ======================================================
+
+async function getOrganizerConcerts(req, res) {
+  try {
+    const organizerId = req.user?.id;
+
+    if (!organizerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const concerts = await fetchConcertRows(organizerId, 500);
+
+    return res.status(200).json({
+      success: true,
+      total: concerts.length,
+      concerts,
+    });
+  } catch (error) {
+    console.error("Get organizer concerts error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil daftar konser",
+    });
+  }
+}
+
+// ======================================================
+// ORGANIZER: CREATE CONCERT FORM OPTIONS
+// GET /api/events/organizer/create-options
+// ======================================================
+
+async function getOrganizerCreateOptions(req, res) {
+  try {
+    const [categories] = await db.execute(
+      "SELECT id, name FROM categories ORDER BY name ASC"
+    );
+
+    const [venues] = await db.execute(
+      `SELECT id, name, address, latitude, longitude
+       FROM venues
+       ORDER BY name ASC`
+    );
+
+    return res.status(200).json({ success: true, categories, venues });
+  } catch (error) {
+    console.error("Get organizer create options error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil pilihan kategori dan venue",
+    });
+  }
+}
+
+// ======================================================
 // EXPORT
 // ======================================================
 
@@ -1507,4 +2072,7 @@ module.exports = {
   rejectEvent,
   publishEvent,
   unpublishEvent,
+  getOrganizerDashboard,
+  getOrganizerConcerts,
+  getOrganizerCreateOptions,
 };

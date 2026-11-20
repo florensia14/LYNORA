@@ -4,6 +4,7 @@ const router = express.Router();
 const {
   checkout,
   getMyOrders,
+  getOrganizerOrders,
 } = require("../controllers/ordersController");
 
 const authenticateToken = require("../middlewares/authMiddleware");
@@ -14,6 +15,13 @@ router.get(
   authenticateToken,
   authorizeRoles("customer"),
   getMyOrders
+);
+
+router.get(
+  "/organizer-orders",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  getOrganizerOrders
 );
 
 router.post(

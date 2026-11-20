@@ -12,6 +12,9 @@ const {
   rejectEvent,
   publishEvent,
   unpublishEvent,
+  getOrganizerDashboard,
+  getOrganizerConcerts,
+  getOrganizerCreateOptions,
 } = require("../controllers/eventsController");
 
 const {
@@ -34,11 +37,8 @@ const router = express.Router();
 // Daftar konser yang sudah disetujui dan dipublikasikan.
 router.get("/", getEvents);
 
-// Detail konser.
-router.get("/:id", getEventById);
-
 // ======================================================
-// EVENT ORGANIZER
+// ROUTE STATIS (harus di atas "/:id")
 // ======================================================
 
 // Daftar konser milik EO.
@@ -48,6 +48,48 @@ router.get(
   authorizeRoles("organizer"),
   getMyEvents
 );
+
+// Super Admin: daftar konser pending dan revisi.
+router.get(
+  "/pending",
+  authenticateToken,
+  authorizeRoles("super_admin"),
+  getPendingEvents
+);
+
+// EO: ringkasan dashboard.
+router.get(
+  "/organizer/dashboard",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  getOrganizerDashboard
+);
+
+// EO: daftar konser.
+router.get(
+  "/organizer/concerts",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  getOrganizerConcerts
+);
+
+// EO: pilihan kategori dan venue untuk Add New Concert.
+router.get(
+  "/organizer/create-options",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  getOrganizerCreateOptions
+);
+
+// ======================================================
+// CUSTOMER: DETAIL
+// ======================================================
+
+router.get("/:id", getEventById);
+
+// ======================================================
+// EVENT ORGANIZER
+// ======================================================
 
 // Buat konser.
 router.post(
@@ -126,14 +168,6 @@ router.delete(
 // ======================================================
 // SUPER ADMIN
 // ======================================================
-
-// Daftar konser pending dan revisi.
-router.get(
-  "/pending",
-  authenticateToken,
-  authorizeRoles("super_admin"),
-  getPendingEvents
-);
 
 // Setujui konser.
 router.patch(

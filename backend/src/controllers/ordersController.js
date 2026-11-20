@@ -341,7 +341,76 @@ const getMyOrders = async (req, res) => {
   }
 };
 
+
+// GET /api/orders/organizer-orders
+async function getOrganizerOrders(req, res) {
+  try {
+    const organizerId = req.user?.id;
+    const eventId = req.query.event_id ? Number(req.query.event_id) : null;
+
+    if (!organizerId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    if (eventId !== null && (!Number.isSafeInteger(eventId) || eventId <= 0)) {
+      return res.status(400).json({ success: false, message: "ID konser tidak valid." });
+    }
+
+    const params = [organizerId];
+    let eventFilter = "";
+    if (eventId !== null) {
+      eventFilter = " AND e.id = ?";
+      params.push(eventId);
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+        o.id,
+        o.order_code,
+        o.total_amount,
+        o.status,
+        o.created_at,
+        u.name AS customer_name,
+        u.email AS customer_email,
+        GROUP_CONCAT(DISTINCT e.name ORDER BY e.name SEPARATOR ', ') AS event_names,
+        COALESCE(SUM(oi.quantity), 0) AS quantity,
+        (SELECT p.payment_type FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS payment_type,
+        (SELECT p.status FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS payment_status
+      FROM orders o
+      JOIN users u ON u.id = o.customer_id
+      JOIN order_items oi ON oi.order_id = o.id
+      JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+      JOIN events e ON e.id = tc.event_id
+      WHERE e.organizer_id = ?${eventFilter}
+      GROUP BY o.id, o.order_code, o.total_amount, o.status, o.created_at, u.name, u.email
+      ORDER BY o.created_at DESC`,
+      params
+    );
+
+    const paymentLabels = {
+      bank_transfer: "Bank Transfer", gopay: "GoPay", qris: "QRIS",
+      credit_card: "Credit Card", shopeepay: "ShopeePay", cstore: "Convenience Store",
+      echannel: "Mandiri Bill", akulaku: "Akulaku",
+    };
+
+    return res.status(200).json({
+      success: true,
+      total: rows.length,
+      data: rows.map((row) => ({
+        ...row,
+        id: Number(row.id),
+        quantity: Number(row.quantity || 0),
+        total_amount: Number(row.total_amount || 0),
+        payment_method: paymentLabels[row.payment_type] || row.payment_type || null,
+      })),
+    });
+  } catch (error) {
+    console.error("Get Organizer Orders Error:", error);
+    return res.status(500).json({ success: false, message: "Gagal mengambil daftar orders." });
+  }
+}
+
 module.exports = {
   checkout,
   getMyOrders,
+  getOrganizerOrders,
 };
