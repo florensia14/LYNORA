@@ -1,0 +1,727 @@
+// @ts-nocheck
+"use client";
+
+import { Suspense, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import AddConcertModal from "@/components/organizer/AddConcertModal";
+
+/* ------------------------------------------------------------------ */
+/* DATA (dummy, replace with your organizer API fetch)                 */
+/* ------------------------------------------------------------------ */
+
+const STATUS_STYLE = {
+  Published: "bg-[#0A3B35] text-[#2EE6A6]",
+  Ongoing: "bg-[#17365B] text-[#38BDF8]",
+  Draft: "bg-[#4A3A17] text-[#FBBF24]",
+  Pending: "bg-[#4A3A17] text-[#FBBF24]",
+  Rejected: "bg-[#4B1D2B] text-[#FB7185]",
+  Completed: "bg-[#27304F] text-slate-300",
+};
+
+const STATUSES = ["Published", "Ongoing", "Draft", "Pending", "Rejected", "Completed"];
+
+/* ------------------------------------------------------------------ */
+/* API CONFIG  (adjust endpoints & fields to match your backend)       */
+/* ------------------------------------------------------------------ */
+
+const API_ORIGIN = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+)
+  .replace(/\/api\/?$/, "")
+  .replace(/\/$/, "");
+
+const ENDPOINTS = {
+  list: `${API_ORIGIN}/api/events/organizer/concerts`, // GET
+  remove: (id) => `${API_ORIGIN}/api/events/${id}`, // DELETE (pending/rejected only)
+};
+
+function authHeaders() {
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function toAbsoluteUrl(path) {
+  if (!path) return "";
+  if (path.startsWith("http") || path.startsWith("data:")) return path;
+  return `${API_ORIGIN}${path.startsWith("/") ? "" : "/"}${path}`;
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function normalizeStatus(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "published" || v === "active") return "Published";
+  if (v === "ongoing") return "Ongoing";
+  if (v === "pending") return "Pending";
+  if (v === "rejected") return "Rejected";
+  if (v === "completed") return "Completed";
+  return "Draft";
+}
+
+// 1,250,000,000 -> "Rp 1.25B" · 12,400,000 -> "Rp 12.4M"
+function formatRupiah(value) {
+  const n = Number(value || 0);
+  const fmt = (x, d) => x.toLocaleString("en-US", { maximumFractionDigits: d });
+  if (n >= 1_000_000_000) return `Rp ${fmt(n / 1_000_000_000, 2)}B`;
+  if (n >= 1_000_000) return `Rp ${fmt(n / 1_000_000, 1)}M`;
+  return `Rp ${fmt(n, 0)}`;
+}
+
+// Response from GET /api/organizer/concerts
+function normalizeConcert(raw) {
+  return {
+    id: raw.id,
+    code: `CNS-${raw.id}`,
+    title: raw.name,
+    poster: toAbsoluteUrl(raw.poster_url),
+    date: formatDate(raw.start_date),
+    venue: raw.venue_name || "-",
+    category: raw.category_name || "Other",
+    sold: Number(raw.sold || 0),
+    capacity: Number(raw.quota || 0),
+    revenue: Number(raw.revenue || 0), // full rupiah amount
+    status: normalizeStatus(raw.display_status || raw.status),
+  };
+}
+
+const PAGE_SIZE = 7;
+
+/* ------------------------------------------------------------------ */
+/* ICONS (PNGs from public/icons, rename files to match yours)         */
+/* ------------------------------------------------------------------ */
+
+const ICON = {
+  totalConcerts: "/icons/clipboard (1).png",
+  ongoing: "/icons/clock.png",
+  published: "/icons/check (1).png",
+  draft: "/icons/draft.png",
+  revenue: "/icons/dollar.png",
+  calendar: "/icons/calendar.png",
+  pin: "/icons/location.png",
+  edit: "/icons/edit.png",
+  view: "/icons/eye (1).png",
+  chevron: "/icons/down-arrow.png",
+  category: "/icons/category.png",
+  more: "/icons/titik3.png",
+};
+
+function Icon({ src, className = "h-5 w-5" }) {
+  return (
+    <img
+      src={src}
+      alt=""
+      aria-hidden="true"
+      className={`${className} shrink-0 object-contain`}
+      onError={(e) => {
+        e.currentTarget.onerror = null;
+        e.currentTarget.style.visibility = "hidden";
+      }}
+    />
+  );
+}
+
+const ClipboardIcon = (p) => <Icon src={ICON.totalConcerts} {...p} />;
+const DraftIcon = (p) => <Icon src={ICON.draft} {...p} />;
+const ClockIcon = (p) => <Icon src={ICON.ongoing} {...p} />;
+const CheckIcon = (p) => <Icon src={ICON.published} {...p} />;
+const ChartIcon = (p) => <Icon src={ICON.revenue} {...p} />;
+const CalendarIcon = (p) => <Icon src={ICON.calendar} {...p} />;
+const PinIcon = (p) => <Icon src={ICON.pin} {...p} />;
+const EditIcon = (p) => <Icon src={ICON.edit} {...p} />;
+const EyeIcon = (p) => <Icon src={ICON.view} {...p} />;
+const ChevronIcon = (p) => <Icon src={ICON.chevron} {...p} />;
+const GridIcon = (p) => <Icon src={ICON.category} {...p} />;
+
+/* ------------------------------------------------------------------ */
+/* SMALL COMPONENTS                                                    */
+/* ------------------------------------------------------------------ */
+
+function StatCard({ icon, label, value, tone }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.07] bg-[#161C38] px-3 py-3 sm:px-4">
+      <span
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone}`}
+      >
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="truncate text-[11px] text-slate-400">{label}</p>
+        <p className="truncate text-xl font-bold leading-tight text-white sm:text-2xl">
+          {value}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({ icon, value, onChange, children, label }) {
+  return (
+    <label className="relative flex h-10 items-center gap-2 rounded-lg border border-white/[0.08] bg-[#161C38] pl-3 pr-8 text-sm text-slate-200 transition focus-within:border-[#8B5CF6]">
+      {icon && <span className="text-slate-300">{icon}</span>}
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-full w-full cursor-pointer appearance-none bg-transparent pr-2 text-sm font-medium outline-none [&>option]:bg-[#161C38]"
+      >
+        {children}
+      </select>
+      <ChevronIcon className="pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400" />
+    </label>
+  );
+}
+
+function RowMenu({ concert, onDelete }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-label="More actions"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-8 w-6 items-center justify-center rounded-md text-white transition hover:bg-white/[0.08]"
+      >
+        <Icon src={ICON.more} className="h-5 w-5" />
+      </button>
+
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close menu"
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute right-0 top-9 z-50 w-40 overflow-hidden rounded-xl border border-white/10 bg-[#17213C] p-1.5 shadow-2xl">
+            <Link
+              href={`/organizer/manage-tickets?concert=${concert.id}`}
+              className="block rounded-lg px-3 py-2 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white"
+            >
+              Manage Tickets
+            </Link>
+            <Link
+              href={`/organizer/orders?concert=${concert.id}`}
+              className="block rounded-lg px-3 py-2 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white"
+            >
+              View Orders
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onDelete(concert);
+              }}
+              className="w-full rounded-lg px-3 py-2 text-left text-xs text-rose-400 transition hover:bg-rose-500/10"
+            >
+              Delete Concert
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ConcertRow({ concert, onDelete }) {
+  const percent = concert.capacity
+    ? Math.min(100, Math.round((concert.sold / concert.capacity) * 1000) / 10)
+    : 0;
+
+  return (
+    <tr className="border-t border-white/[0.06] transition hover:bg-white/[0.025]">
+      {/* DETAILS */}
+      <td className="px-4 py-3.5">
+        <div className="flex items-center gap-3">
+          <div className="h-[60px] w-[50px] shrink-0 overflow-hidden rounded-md bg-[linear-gradient(160deg,#F59E0B_0%,#7C3AED_100%)]">
+            <img
+              src={concert.poster}
+              alt={concert.title}
+              className="h-full w-full object-cover"
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          </div>
+          <div className="min-w-0">
+            <p className="max-w-[150px] text-[11px] font-bold leading-snug text-white">
+              {concert.title}
+            </p>
+            <p className="mt-1 text-[9px] text-slate-400">ID: {concert.code}</p>
+          </div>
+        </div>
+      </td>
+
+      {/* DATE & VENUE */}
+      <td className="px-4 py-3.5">
+        <div className="space-y-1.5 text-[10px] text-slate-300">
+          <p className="flex items-center gap-1.5">
+            <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-white" />
+            {concert.date}
+          </p>
+          <p className="flex items-center gap-1.5">
+            <PinIcon className="h-3.5 w-3.5 shrink-0 text-white" />
+            {concert.venue}
+          </p>
+        </div>
+      </td>
+
+      {/* TICKETS SOLD */}
+      <td className="px-4 py-3.5">
+        <div className="w-[130px]">
+          <p className="text-[11px] text-slate-400">
+            <span className="font-bold text-white">
+              {concert.sold.toLocaleString("en-US")}
+            </span>{" "}
+            / {concert.capacity.toLocaleString("en-US")}
+          </p>
+          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-white">
+            <div
+              className="h-full rounded-full bg-[#2EE672]"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <p className="mt-1 text-[9px] font-medium text-[#A78BFA]">
+            {percent}%
+          </p>
+        </div>
+      </td>
+
+      {/* REVENUE */}
+      <td className="whitespace-nowrap px-4 py-3.5 text-xs font-bold text-white">
+        {formatRupiah(concert.revenue)}
+      </td>
+
+      {/* STATUS */}
+      <td className="px-4 py-3.5">
+        <span
+          className={`inline-flex rounded-md px-3 py-1.5 text-[10px] font-semibold ${
+            STATUS_STYLE[concert.status]
+          }`}
+        >
+          {concert.status}
+        </span>
+      </td>
+
+      {/* ACTIONS */}
+      <td className="px-4 py-3.5">
+        <div className="flex items-center justify-center gap-3 text-white">
+          <Link
+            href={`/organizer/manage-concert/${concert.id}/edit`}
+            aria-label={`Edit ${concert.title}`}
+            className="transition hover:text-[#C4B5FD]"
+          >
+            <EditIcon className="h-[18px] w-[18px]" />
+          </Link>
+          <Link
+            href={`/organizer/manage-concert/${concert.id}`}
+            aria-label={`View ${concert.title}`}
+            className="transition hover:text-[#C4B5FD]"
+          >
+            <EyeIcon className="h-[18px] w-[18px]" />
+          </Link>
+          <RowMenu concert={concert} onDelete={onDelete} />
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PAGE CONTENT                                                        */
+/* ------------------------------------------------------------------ */
+
+function ManageConcertContent() {
+  const searchParams = useSearchParams();
+  const keyword = (searchParams.get("search") || "").trim().toLowerCase();
+
+  const [concerts, setConcerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [toDelete, setToDelete] = useState(null);
+  const [showAddConcert, setShowAddConcert] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [status, setStatus] = useState("all");
+  const [category, setCategory] = useState("all");
+  const [sort, setSort] = useState("newest");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function load() {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await fetch(ENDPOINTS.list, {
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          signal: controller.signal,
+        });
+        if (res.status === 401)
+          throw new Error("Your session has expired. Please log in again.");
+        if (!res.ok) throw new Error("Failed to load concert data.");
+        const data = await res.json();
+        const list = Array.isArray(data)
+          ? data
+          : data.concerts ?? data.data ?? [];
+        setConcerts(list.map(normalizeConcert));
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setError(err.message || "Something went wrong.");
+          setConcerts([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
+    load();
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  async function confirmDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const res = await fetch(ENDPOINTS.remove(toDelete.id), {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Failed to delete concert.");
+      }
+      setConcerts((list) => list.filter((c) => c.id !== toDelete.id));
+      setToDelete(null);
+    } catch (err) {
+      setDeleteError(err.message || "Something went wrong.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const categories = useMemo(
+    () => [...new Set(concerts.map((c) => c.category))].sort(),
+    [concerts]
+  );
+
+  // go back to page 1 whenever a filter / search changes
+  useEffect(() => {
+    setPage(1);
+  }, [keyword, status, category, sort]);
+
+  const stats = useMemo(() => {
+    const revenue = concerts.reduce((sum, c) => sum + c.revenue, 0);
+    return {
+      total: concerts.length,
+      ongoing: concerts.filter((c) => c.status === "Ongoing").length,
+      published: concerts.filter((c) => c.status === "Published").length,
+      draft: concerts.filter((c) => c.status === "Draft").length,
+      revenue,
+    };
+  }, [concerts]);
+
+  const filtered = useMemo(() => {
+    const list = concerts.filter((c) => {
+      if (status !== "all" && c.status !== status) return false;
+      if (category !== "all" && c.category !== category) return false;
+      if (
+        keyword &&
+        !`${c.title} ${c.venue} ${c.id}`.toLowerCase().includes(keyword)
+      )
+        return false;
+      return true;
+    });
+
+    if (sort === "revenue") list.sort((a, b) => b.revenue - a.revenue);
+    if (sort === "sold") list.sort((a, b) => b.sold - a.sold);
+    return list;
+  }, [concerts, status, category, keyword, sort]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const start = (page - 1) * PAGE_SIZE;
+  const visible = filtered.slice(start, start + PAGE_SIZE);
+
+  return (
+    <div className="mx-auto w-full max-w-[1500px] space-y-4">
+      {/* HERO BANNER */}
+      <section className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[linear-gradient(120deg,#2A1B5C_0%,#6D28D9_50%,#DB2777_100%)]">
+        <img
+          src="/images/hero/ao.jpg"
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={(e) => {
+            e.currentTarget.onerror = null;
+            e.currentTarget.style.display = "none";
+          }}
+        />
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(11,17,34,0.85)_0%,rgba(11,17,34,0.35)_60%,rgba(11,17,34,0.1)_100%)]" />
+
+        <div className="relative flex min-h-[130px] flex-col justify-end gap-3 p-4 sm:min-h-[150px] sm:flex-row sm:items-end sm:justify-between sm:p-6">
+          <div>
+            <h2 className="text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
+              Manage{" "}
+              <span className="bg-[linear-gradient(90deg,#A78BFA,#22D3EE)] bg-clip-text text-transparent">
+                Concerts
+              </span>
+            </h2>
+            <p className="mt-1 text-[11px] text-slate-200 sm:text-xs">
+              View, edit, and manage all your concerts in one place.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowAddConcert(true)}
+            className="inline-flex h-9 w-fit items-center gap-1.5 rounded-lg bg-[linear-gradient(100deg,#8B5CF6_0%,#6539D5_100%)] px-3.5 text-[11px] font-semibold text-white shadow-[0_6px_20px_rgba(139,92,246,0.4)] transition hover:brightness-110"
+          >
+            <span className="text-base leading-none">+</span> Add New Concerts
+          </button>
+        </div>
+      </section>
+
+      {/* STATS */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCard
+          label="Total Concerts"
+          value={stats.total}
+          tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
+          icon={<ClipboardIcon />}
+        />
+        <StatCard
+          label="Ongoing"
+          value={stats.ongoing}
+          tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
+          icon={<ClockIcon />}
+        />
+        <StatCard
+          label="Published"
+          value={stats.published}
+          tone="bg-[#10B981]/25 text-[#34D399]"
+          icon={<CheckIcon />}
+        />
+        <StatCard
+          label="Draft"
+          value={stats.draft}
+          tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
+          icon={<DraftIcon />}
+        />
+        <div className="col-span-2 sm:col-span-1">
+          <StatCard
+            label="Total Revenue"
+            value={formatRupiah(stats.revenue)}
+            tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
+            icon={<ChartIcon />}
+          />
+        </div>
+      </section>
+
+      {/* FILTERS */}
+      <section className="flex flex-wrap items-center gap-2.5">
+        <FilterSelect label="Filter status" value={status} onChange={setStatus}>
+          <option value="all">All Status</option>
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </FilterSelect>
+
+        <FilterSelect
+          label="Filter category"
+          value={category}
+          onChange={setCategory}
+          icon={<GridIcon className="h-5 w-5" />}
+        >
+          <option value="all">Category</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </FilterSelect>
+
+        <FilterSelect
+          label="Sort by"
+          value={sort}
+          onChange={setSort}
+          icon={<CalendarIcon className="h-5 w-5" />}
+        >
+          <option value="newest">Date</option>
+          <option value="revenue">Top revenue</option>
+          <option value="sold">Most tickets sold</option>
+        </FilterSelect>
+
+        {keyword && (
+          <span className="ml-1 text-xs text-slate-400">
+            Results for “<span className="text-white">{keyword}</span>”
+          </span>
+        )}
+      </section>
+
+      {/* TABLE */}
+      <section className="overflow-hidden rounded-xl border border-white/[0.07] bg-[#111833]">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] border-collapse text-left">
+            <thead>
+              <tr className="bg-[#3B2BB0] text-[11px] font-bold text-white">
+                <th className="px-4 py-3.5">Concert Details</th>
+                <th className="px-4 py-3.5">Date &amp; Venue</th>
+                <th className="px-4 py-3.5">Tickets Sold</th>
+                <th className="px-4 py-3.5">Gross Revenue</th>
+                <th className="px-4 py-3.5">Status</th>
+                <th className="px-4 py-3.5 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-14 text-center text-xs text-slate-400">
+                    Loading concerts...
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-14 text-center">
+                    <p className="text-sm font-semibold text-rose-400">{error}</p>
+                    <button
+                      type="button"
+                      onClick={() => setReloadKey((k) => k + 1)}
+                      className="mt-3 rounded-lg bg-[#7C3AED] px-3.5 py-2 text-xs font-semibold text-white transition hover:brightness-110"
+                    >
+                      Try again
+                    </button>
+                  </td>
+                </tr>
+              ) : visible.length > 0 ? (
+                visible.map((c) => (
+                  <ConcertRow key={c.id} concert={c} onDelete={setToDelete} />
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="px-4 py-14 text-center">
+                    <p className="text-sm font-semibold text-slate-300">
+                      No concerts found
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Try changing the filters or search keyword.
+                    </p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* FOOTER / PAGINATION */}
+        <div className="flex flex-col gap-3 border-t border-white/[0.06] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[11px] text-slate-300">
+            Showing {visible.length} of {filtered.length} concerts
+          </p>
+
+          <nav aria-label="Pagination" className="flex items-center gap-1.5">
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setPage(n)}
+                aria-current={n === page ? "page" : undefined}
+                className={`h-7 min-w-7 rounded-md px-2 text-[11px] font-semibold transition ${
+                  n === page
+                    ? "bg-[#7C3AED] text-white"
+                    : "bg-[#1D2548] text-slate-200 hover:bg-[#28326A]"
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </section>
+
+      {/* ADD CONCERT MODAL */}
+      {showAddConcert && (
+        <AddConcertModal
+          onClose={() => setShowAddConcert(false)}
+          onCreated={() => {
+            setShowAddConcert(false);
+            setReloadKey((key) => key + 1);
+          }}
+        />
+      )}
+
+      {/* DELETE CONFIRMATION */}
+      {toDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Delete concert"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4"
+        >
+          <div className="w-full max-w-sm rounded-xl border border-white/10 bg-[#17213C] p-5 shadow-2xl">
+            <h3 className="text-base font-bold text-white">Delete concert?</h3>
+            <p className="mt-2 text-xs leading-relaxed text-slate-300">
+              “{toDelete.title}” and its data will be permanently deleted. This
+              action cannot be undone.
+            </p>
+            {deleteError && (
+              <p className="mt-2 text-xs text-rose-400">{deleteError}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => {
+                  setToDelete(null);
+                  setDeleteError("");
+                }}
+                className="rounded-lg bg-[#1D2548] px-3.5 py-2 text-xs font-semibold text-slate-200 transition hover:bg-[#28326A] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={confirmDelete}
+                className="rounded-lg bg-rose-600 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50"
+              >
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* useSearchParams must be wrapped in Suspense in the Next.js App Router */
+export default function ManageConcertPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="py-20 text-center text-sm text-slate-400">
+          Loading concerts...
+        </div>
+      }
+    >
+      <ManageConcertContent />
+    </Suspense>
+  );
+}
