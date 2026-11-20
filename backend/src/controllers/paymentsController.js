@@ -30,11 +30,15 @@ async function createPayment(req, res) {
 
   try {
     if (!Number.isSafeInteger(orderId) || orderId <= 0) {
-      return res.status(400).json({ message: "ID order tidak valid" });
+      return res.status(400).json({
+        message: "ID order tidak valid",
+      });
     }
 
     if (!customerId) {
-      return res.status(401).json({ message: "Belum terautentikasi" });
+      return res.status(401).json({
+        message: "Belum terautentikasi",
+      });
     }
 
     const config = midtransConfig.validateConfiguration();
@@ -63,6 +67,7 @@ async function createPayment(req, res) {
     await connection.beginTransaction();
     transactionStarted = true;
 
+    // Ambil data order dan pastikan order milik customer.
     const [orders] = await connection.execute(
       `SELECT
          o.id,
@@ -83,7 +88,10 @@ async function createPayment(req, res) {
     if (!orders.length) {
       await connection.rollback();
       transactionStarted = false;
-      return res.status(404).json({ message: "Order tidak ditemukan" });
+
+      return res.status(404).json({
+        message: "Order tidak ditemukan",
+      });
     }
 
     const order = orders[0];
@@ -91,6 +99,7 @@ async function createPayment(req, res) {
     if (order.status !== "pending") {
       await connection.rollback();
       transactionStarted = false;
+
       return res.status(400).json({
         message: "Order tidak dalam status pending",
       });
@@ -99,6 +108,7 @@ async function createPayment(req, res) {
     if (isOrderExpired(order.expires_at)) {
       await connection.rollback();
       transactionStarted = false;
+
       return res.status(400).json({
         message: "Masa pembayaran order sudah berakhir",
       });
@@ -109,6 +119,7 @@ async function createPayment(req, res) {
     if (!Number.isSafeInteger(amount) || amount <= 0) {
       await connection.rollback();
       transactionStarted = false;
+
       return res.status(400).json({
         message: "Nominal order tidak valid",
       });
@@ -131,13 +142,14 @@ async function createPayment(req, res) {
 
       const [insertResult] = await connection.execute(
         `INSERT INTO payments (
-           order_id,
-           midtrans_order_id,
-           amount,
-           status,
-           transaction_status
-         )
-         VALUES (?, ?, ?, 'pending', 'pending')`,
+          order_id,
+          midtrans_order_id,
+          method,
+          amount,
+          status,
+          transaction_status
+        )
+        VALUES (?, ?, 'midtrans', ?, 'pending', 'pending')`,
         [orderId, initialMidtransId, amount]
       );
 
@@ -150,6 +162,7 @@ async function createPayment(req, res) {
     if (payment.status === "success" || payment.status === "refunded") {
       await connection.rollback();
       transactionStarted = false;
+
       return res.status(409).json({
         message: "Pembayaran order sudah diproses",
       });
@@ -171,6 +184,7 @@ async function createPayment(req, res) {
     if (latestAttempt?.status === "success") {
       await connection.rollback();
       transactionStarted = false;
+
       return res.status(409).json({
         message: "Order sudah berhasil dibayar",
       });
@@ -212,6 +226,7 @@ async function createPayment(req, res) {
       });
     }
 
+    // Ambil item tiket dari order.
     const [itemRows] = await connection.execute(
       `SELECT
          oi.ticket_category_id,
@@ -229,6 +244,7 @@ async function createPayment(req, res) {
     if (!itemRows.length) {
       await connection.rollback();
       transactionStarted = false;
+
       return res.status(400).json({
         message: "Order tidak memiliki item tiket",
       });
@@ -243,7 +259,7 @@ async function createPayment(req, res) {
 
     const midtransOrderId = generateMidtransOrderId(orderId);
 
-    // Simpan percobaan terlebih dahulu agar webhook dapat mengenalinya.
+    // Simpan percobaan pembayaran agar webhook dapat mengenalinya.
     await connection.execute(
       `INSERT INTO payment_attempts (
          payment_id,
@@ -257,6 +273,7 @@ async function createPayment(req, res) {
       [payment.id, orderId, midtransOrderId, amount]
     );
 
+    // Update ringkasan pembayaran.
     await connection.execute(
       `UPDATE payments
        SET midtrans_order_id = ?,
@@ -264,7 +281,7 @@ async function createPayment(req, res) {
            status = 'pending',
            transaction_id = NULL,
            snap_token = NULL,
-           redirect_url = NULL,
+           snap_redirect_url = NULL,
            payment_type = NULL,
            transaction_status = 'pending',
            fraud_status = NULL,
@@ -401,7 +418,8 @@ async function createPayment(req, res) {
     await connection.execute(
       `UPDATE payments
        SET snap_token = ?,
-           redirect_url = ?
+           snap_redirect_url = ?,
+           snap_token_created_at = NOW()
        WHERE id = ?
          AND midtrans_order_id = ?
          AND status = 'pending'`,
@@ -425,11 +443,17 @@ async function createPayment(req, res) {
       try {
         await connection.rollback();
       } catch (rollbackError) {
-        console.error("[midtrans] Rollback error:", rollbackError.message);
+        console.error(
+          "[midtrans] Rollback error:",
+          rollbackError.message
+        );
       }
     }
 
-    console.error("[midtrans] Create payment error:", error.message);
+    console.error(
+      "[midtrans] Create payment error:",
+      error.message
+    );
 
     return res.status(500).json({
       message: "Gagal membuat pembayaran Midtrans",
@@ -444,7 +468,10 @@ async function createPayment(req, res) {
           );
         }
       } catch (error) {
-        console.error("[midtrans] Release lock error:", error.message);
+        console.error(
+          "[midtrans] Release lock error:",
+          error.message
+        );
       } finally {
         connection.release();
       }

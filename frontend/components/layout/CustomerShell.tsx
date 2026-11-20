@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
-import { imageUrl, type User } from "@/lib/customer";
+import { API_URL, imageUrl, type User } from "@/lib/customer";
 
 type CustomerUser = User & { photo_version?: number };
 type SearchConfig = {
@@ -35,69 +35,124 @@ type NotificationItem = {
   read: boolean;
 };
 
-const initialNotifications: NotificationItem[] = [
-  {
-    id: 1,
-    category: "transaction",
-    title: "Pembayaran Berhasil",
-    description:
-      "Pembayaran untuk pesanan ORD-20261118-042 berhasil dikonfirmasi.",
-    time: "5 menit lalu",
-    icon: "✓",
-    tone: "success",
-    read: false,
-  },
-  {
-    id: 2,
-    category: "transaction",
-    title: "E-Ticket Diterbitkan",
-    description:
-      "E-Ticket untuk konser BLACKPINK WORLD TOUR sudah tersedia. Lihat di menu My Tickets.",
-    time: "10 menit lalu",
-    icon: "▰",
-    tone: "purple",
-    read: false,
-  },
-  {
-    id: 3,
-    category: "concert",
-    title: "Perubahan Jadwal Konser",
-    description:
-      "Jadwal konser LANY — Soft World Tour diubah menjadi 25 Jan 2027.",
-    time: "2 jam lalu",
-    icon: "▦",
-    tone: "blue",
-    read: false,
-  },
-  {
-    id: 4,
+type ApiNotification = {
+  id: number;
+  title: string;
+  message: string;
+  type: string;
+  is_read: boolean | number;
+  created_at: string;
+};
+
+function relativeTime(value: string) {
+  const date = new Date(value);
+  const timestamp = date.getTime();
+
+  if (!Number.isFinite(timestamp)) return "-";
+
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return "Baru saja";
+  if (minutes < 60) return `${minutes} menit lalu`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} jam lalu`;
+
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Kemarin";
+  if (days < 7) return `${days} hari lalu`;
+
+  return date.toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function mapApiNotification(row: ApiNotification): NotificationItem {
+  const type = String(row.type || "").toLowerCase();
+
+  if (type === "payment") {
+    return {
+      id: Number(row.id),
+      category: "transaction",
+      title: row.title,
+      description: row.message,
+      time: relativeTime(row.created_at),
+      icon: "✓",
+      tone: "success",
+      read: Boolean(row.is_read),
+    };
+  }
+
+  if (type === "ticket") {
+    return {
+      id: Number(row.id),
+      category: "transaction",
+      title: row.title,
+      description: row.message,
+      time: relativeTime(row.created_at),
+      icon: "▰",
+      tone: "purple",
+      read: Boolean(row.is_read),
+    };
+  }
+
+  if (type === "schedule" || type === "cancellation") {
+    return {
+      id: Number(row.id),
+      category: "concert",
+      title: row.title,
+      description: row.message,
+      time: relativeTime(row.created_at),
+      icon: "▦",
+      tone: "blue",
+      read: Boolean(row.is_read),
+    };
+  }
+
+  return {
+    id: Number(row.id),
     category: "system",
-    title: "Pengumuman Sistem",
-    description:
-      "Akan ada maintenance sistem pada 20 Nov 2026 pukul 01:00 – 03:00 WIB.",
-    time: "6 jam lalu",
+    title: row.title,
+    description: row.message,
+    time: relativeTime(row.created_at),
     icon: "⚑",
     tone: "pink",
-    read: false,
-  },
-  {
-    id: 5,
-    category: "concert",
-    title: "Konser Baru Ditambahkan",
-    description:
-      "Konser Avenged Sevenfold kini tersedia di LYNORA. Cek dan amankan tiketnya sekarang!",
-    time: "8 jam lalu",
-    icon: "☆",
-    tone: "yellow",
-    read: false,
-  },
-];
+    read: Boolean(row.is_read),
+  };
+}
+
+async function notificationRequest<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = localStorage.getItem("token");
+
+  if (!token) {
+    throw new Error("Sesi login tidak ditemukan.");
+  }
+
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {}),
+    },
+  });
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(result.message || "Failed to process notification");
+  }
+
+  return result as T;
+}
 
 const notificationTabs = [
-  { id: "all", label: "Semua" },
-  { id: "transaction", label: "Transaksi" },
-  { id: "concert", label: "Konser" },
-  { id: "system", label: "Sistem" },
+  { id: "all", label: "All" },
+  { id: "transaction", label: "Transaction" },
+  { id: "concert", label: "Concert" },
+  { id: "system", label: "System" },
 ] as const;
 
 function getProfilePhoto(
@@ -128,8 +183,9 @@ export default function CustomerShell({
   const [showNotificationsPanel, setShowNotificationsPanel] = useState(false);
   const [activeNotificationTab, setActiveNotificationTab] =
     useState<(typeof notificationTabs)[number]["id"]>("all");
-  const [notifications, setNotifications] =
-    useState<NotificationItem[]>(initialNotifications);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
   useEffect(() => {
     function loadUser() {
@@ -167,6 +223,40 @@ export default function CustomerShell({
   }, [router]);
 
   useEffect(() => {
+    let active = true;
+
+    async function loadNotifications() {
+      try {
+        setNotificationsLoading(true);
+
+        const result = await notificationRequest<{
+          success: boolean;
+          notifications: ApiNotification[];
+        }>("/notifications");
+
+        if (!active) return;
+
+        const rows = Array.isArray(result.notifications)
+          ? result.notifications
+          : [];
+
+        setNotifications(rows.map(mapApiNotification));
+      } catch (error) {
+        console.error("Load customer notifications:", error);
+        if (active) setNotifications([]);
+      } finally {
+        if (active) setNotificationsLoading(false);
+      }
+    }
+
+    loadNotifications();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setShowProfileMenu(false);
@@ -185,20 +275,44 @@ export default function CustomerShell({
     router.replace("/login");
   }
 
-  function markAllNotificationsRead() {
-    setNotifications((current) =>
-      current.map((item) => ({ ...item, read: true })),
-    );
+  async function markAllNotificationsRead() {
+    if (unreadCount === 0 || notificationActionLoading) return;
+
+    try {
+      setNotificationActionLoading(true);
+
+      await notificationRequest("/notifications/read-all", {
+        method: "PATCH",
+      });
+
+      setNotifications((current) =>
+        current.map((item) => ({ ...item, read: true })),
+      );
+    } catch (error) {
+      console.error("Mark all notifications read:", error);
+    } finally {
+      setNotificationActionLoading(false);
+    }
   }
 
-  function openNotification(item: NotificationItem) {
-    setNotifications((current) =>
-      current.map((notification) =>
-        notification.id === item.id
-          ? { ...notification, read: true }
-          : notification,
-      ),
-    );
+  async function openNotification(item: NotificationItem) {
+    if (!item.read) {
+      try {
+        await notificationRequest(`/notifications/${item.id}/read`, {
+          method: "PATCH",
+        });
+
+        setNotifications((current) =>
+          current.map((notification) =>
+            notification.id === item.id
+              ? { ...notification, read: true }
+              : notification,
+          ),
+        );
+      } catch (error) {
+        console.error("Mark notification read:", error);
+      }
+    }
 
     setShowNotificationsPanel(false);
     router.push("/customer/notifications");
@@ -311,38 +425,38 @@ export default function CustomerShell({
                       />
 
                       <section
-                        className="absolute right-[-54px] top-[calc(100%+17px)] z-50 w-[min(540px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-[#7650C8]/70 bg-[linear-gradient(145deg,#111827_0%,#10182B_55%,#11172A_100%)] shadow-[0_22px_70px_rgba(0,0,0,0.58)] sm:right-[-58px] lg:right-[-52px]"
+                        className="absolute right-[-48px] top-[calc(100%+12px)] z-50 w-[min(370px,calc(100vw-20px))] overflow-hidden rounded-xl border border-[#7650C8]/70 bg-[linear-gradient(145deg,#111827_0%,#10182B_55%,#11172A_100%)] shadow-[0_18px_55px_rgba(0,0,0,0.58)] sm:right-[-48px] lg:right-[-42px]"
                         aria-label="Panel notifikasi"
                       >
-                        <div className="absolute -top-[7px] right-[72px] h-3.5 w-3.5 rotate-45 border-l border-t border-[#7650C8]/70 bg-[#111827]" />
+                        <div className="absolute -top-[7px] right-[60px] h-3.5 w-3.5 rotate-45 border-l border-t border-[#7650C8]/70 bg-[#111827]" />
 
-                        <div className="relative flex items-center justify-between gap-3 px-5 pb-4 pt-5 sm:px-6">
+                        <div className="relative flex items-center justify-between gap-3 px-4 pb-3 pt-4">
                           <div>
-                            <h2 className="text-lg font-bold tracking-tight text-white sm:text-xl">
+                            <h2 className="text-base font-bold tracking-tight text-white">
                               Notifikasi
                             </h2>
-                            <p className="mt-0.5 text-xs text-slate-400">
+                            <p className="mt-0.5 text-[11px] text-slate-400">
                               {unreadCount > 0
-                                ? `${unreadCount} notifikasi belum dibaca`
-                                : "Semua notifikasi sudah dibaca"}
+                                ? `${unreadCount} unread notifications`
+                                : "All notifications have been read"}
                             </p>
                           </div>
 
                           <button
                             type="button"
                             onClick={markAllNotificationsRead}
-                            disabled={unreadCount === 0}
-                            className="shrink-0 text-xs font-semibold text-[#C084FC] transition hover:text-[#22D3EE] disabled:cursor-default disabled:opacity-45 sm:text-sm"
+                            disabled={unreadCount === 0 || notificationActionLoading}
+                            className="shrink-0 text-[11px] font-semibold text-[#C084FC] transition hover:text-[#22D3EE] disabled:cursor-default disabled:opacity-45 sm:text-sm"
                           >
                             ✓{" "}
                             <span className="hidden sm:inline">
-                              Tandai semua dibaca
+                              Mark all as read
                             </span>
-                            <span className="sm:hidden">Baca semua</span>
+                            <span className="sm:hidden">See all</span>
                           </button>
                         </div>
 
-                        <div className="flex gap-1.5 overflow-x-auto px-4 pb-4 sm:gap-2 sm:px-6">
+                        <div className="flex gap-1.5 overflow-x-auto px-4 pb-3">
                           {notificationTabs.map((tab) => (
                             <button
                               key={tab.id}
@@ -350,7 +464,7 @@ export default function CustomerShell({
                               onClick={() =>
                                 setActiveNotificationTab(tab.id)
                               }
-                              className={`shrink-0 rounded-full border px-3 py-2 text-[11px] font-medium transition sm:px-4 sm:text-sm ${
+                              className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-medium transition ${
                                 activeNotificationTab === tab.id
                                   ? "border-[#8B5CF6] bg-[linear-gradient(100deg,#8B5CF6_0%,#6539D5_100%)] text-white shadow-[0_4px_16px_rgba(139,92,246,0.35)]"
                                   : "border-[#51416F]/70 bg-[#171D30] text-slate-300 hover:border-[#8B5CF6]/70 hover:text-white"
@@ -361,17 +475,21 @@ export default function CustomerShell({
                           ))}
                         </div>
 
-                        <div className="max-h-[min(470px,60vh)] overflow-y-auto px-4 sm:px-6">
-                          {filteredNotifications.length > 0 ? (
+                        <div className="max-h-[min(330px,55vh)] overflow-y-auto px-4">
+                          {notificationsLoading ? (
+                            <div className="border-t border-white/[0.07] py-8 text-center text-[11px] text-slate-400">
+                              Memuat notifikasi...
+                            </div>
+                          ) : filteredNotifications.length > 0 ? (
                             filteredNotifications.map((item) => (
                               <button
                                 key={item.id}
                                 type="button"
                                 onClick={() => openNotification(item)}
-                                className="group flex w-full items-start gap-3 border-t border-white/[0.07] py-4 text-left transition hover:bg-white/[0.035] sm:gap-4"
+                                className="group flex w-full items-start gap-3 border-t border-white/[0.07] py-3 text-left transition hover:bg-white/[0.035] sm:gap-4"
                               >
                                 <span
-                                  className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl font-semibold ${
+                                  className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xl font-semibold ${
                                     item.tone === "success"
                                       ? "bg-[#063D35] text-[#00D68F]"
                                       : item.tone === "purple"
@@ -389,7 +507,7 @@ export default function CustomerShell({
                                 <span className="min-w-0 flex-1">
                                   <span className="flex items-start justify-between gap-2">
                                     <span
-                                      className={`text-sm font-bold ${
+                                      className={`text-[12px] font-bold ${
                                         item.read
                                           ? "text-slate-300"
                                           : "text-white"
@@ -397,41 +515,41 @@ export default function CustomerShell({
                                     >
                                       {item.title}
                                     </span>
-                                    <span className="shrink-0 whitespace-nowrap text-[10px] text-slate-400 sm:text-xs">
+                                    <span className="shrink-0 whitespace-nowrap text-[9px] text-slate-400">
                                       {item.time}
                                     </span>
                                   </span>
-                                  <span className="mt-1 block text-xs leading-relaxed text-slate-300 sm:text-[13px]">
+                                  <span className="mt-1 block text-[11px] leading-relaxed text-slate-300">
                                     {item.description}
                                   </span>
                                 </span>
 
                                 {!item.read && (
-                                  <span className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-[#C084FC] shadow-[0_0_10px_rgba(192,132,252,0.55)]" />
+                                  <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#C084FC] shadow-[0_0_10px_rgba(192,132,252,0.55)]" />
                                 )}
                               </button>
                             ))
                           ) : (
                             <div className="border-t border-white/[0.07] py-10 text-center">
                               <p className="text-sm font-semibold text-slate-300">
-                                Belum ada notifikasi
+                               No notifications yet
                               </p>
                               <p className="mt-1 text-xs text-slate-500">
-                                Notifikasi kategori ini akan muncul di sini.
+                                Notifications for this category will appear here.
                               </p>
                             </div>
                           )}
                         </div>
 
-                        <div className="border-t border-white/[0.08] px-5 py-4 text-center sm:px-6">
+                        <div className="border-t border-white/[0.08] px-4 py-3 text-center">
                           <Link
                             href="/customer/notifications"
                             onClick={() =>
                               setShowNotificationsPanel(false)
                             }
-                            className="inline-flex items-center gap-2 text-sm font-bold text-[#D879F7] transition hover:text-[#22D3EE]"
+                            className="inline-flex items-center gap-2 text-xs font-bold text-[#D879F7] transition hover:text-[#22D3EE]"
                           >
-                            Lihat Semua Notifikasi{" "}
+                            See All Notifications{" "}
                             <span className="text-lg">→</span>
                           </Link>
                         </div>

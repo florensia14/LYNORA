@@ -1186,7 +1186,7 @@ function ConcertCard({
 
   return (
 
-    <Link href={`/customer/explore/${concert.id}`} className={s.link}>
+    <Link href={`/events/${concert.id}?from=explore`} className={s.link}>
 
       <article className={s.root}>
 

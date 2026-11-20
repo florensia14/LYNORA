@@ -1,3 +1,4 @@
+
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
@@ -15,10 +16,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Akses file poster yang diunggah
+// Static Uploads
+// Mengakses file poster, avatar, dan banner
 app.use(
   "/uploads",
-  express.static(path.join(__dirname, "uploads"))
+  express.static(path.join(__dirname, "../uploads"))
 );
 
 // Health Check
@@ -54,7 +56,9 @@ const paymentsRoutes = require("./routes/paymentsRoutes");
 const notificationsRoutes = require("./routes/notificationsRoutes");
 const wishlistRoutes = require("./routes/wishlistRoutes");
 const ticketsRoutes = require("./routes/ticketsRoutes");
+const profileRoutes = require("./routes/profileRoutes");
 
+// Register Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/events", eventsRoutes);
 app.use("/api/orders", ordersRoutes);
@@ -62,23 +66,27 @@ app.use("/api/payments", paymentsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/tickets", ticketsRoutes);
+app.use("/api/profile", profileRoutes);
 
 // Upload Error Handler
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({
-        message: "Ukuran file maksimal 2 MB",
+        success: false,
+        message: "Ukuran file melebihi batas yang diizinkan.",
       });
     }
 
     return res.status(400).json({
-      message: "Terjadi kesalahan saat mengunggah file",
+      success: false,
+      message: "Terjadi kesalahan saat mengunggah file.",
     });
   }
 
   if (error.message === "Format file harus JPG, PNG, atau WEBP") {
     return res.status(400).json({
+      success: false,
       message: error.message,
     });
   }
@@ -86,7 +94,8 @@ app.use((error, req, res, next) => {
   console.error("Application error:", error);
 
   return res.status(500).json({
-    message: "Terjadi kesalahan pada server",
+    success: false,
+    message: "Terjadi kesalahan pada server.",
   });
 });
 

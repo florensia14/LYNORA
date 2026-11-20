@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type Role = "customer" | "organizer" | "super_admin";
 type Lang = "EN" | "ID";
@@ -31,18 +31,25 @@ type MenuGroup = {
 
 const API_ORIGIN = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
-).replace(/\/api\/?$/, "").replace(/\/$/, "");
+)
+  .replace(/\/api\/?$/, "")
+  .replace(/\/$/, "");
 
 const icon = (name: string) => `/icons/${name}.png`;
 const iconActive = (name: string) => `/icons/${name}%20(1).png`;
 
 const menus: Record<Role, MenuGroup[]> = {
+  // CUSTOMER MENU
   customer: [
     {
       title: "Main Menu",
       items: [
         { label: "Home", href: "/customer/home", icon: "home" },
-        { label: "Explore Concerts", href: "/customer/explore", icon: "cari" },
+        {
+          label: "Explore Concerts",
+          href: "/customer/explore",
+          icon: "cari",
+        },
       ],
     },
     {
@@ -51,7 +58,11 @@ const menus: Record<Role, MenuGroup[]> = {
         { label: "Wishlist", href: "/customer/wishlist", icon: "wishlist" },
         { label: "My Tickets", href: "/customer/tickets", icon: "ticket" },
         { label: "My Orders", href: "/customer/orders", icon: "clipboard" },
-        { label: "Notifications", href: "/customer/notifications", icon: "notif" },
+        {
+          label: "Notifications",
+          href: "/customer/notifications",
+          icon: "notif",
+        },
       ],
     },
     {
@@ -63,57 +74,140 @@ const menus: Record<Role, MenuGroup[]> = {
     },
   ],
 
+  // ORGANIZER MENU
   organizer: [
     {
       title: "Main Menu",
       items: [
-        { label: "Dashboard", href: "/dashboard/organizer", icon: "home" },
-        { label: "My Events", href: "/dashboard/organizer/events", icon: "ticket" },
-        { label: "Create Event", href: "/dashboard/organizer/events/create", icon: "clipboard" },
+        {
+          label: "Dashboard",
+          href: "/organizer/dashboard",
+          icon: "home",
+        },
+        {
+          label: "Manage Concerts",
+          href: "/organizer/manage-concert",
+          icon: "calendar",
+        },
+        {
+          label: "Manage Tickets",
+          href: "/organizer/manage-tickets",
+          icon: "ticket",
+        },
       ],
     },
     {
       title: "Management",
       items: [
-        { label: "Ticket Management", href: "/dashboard/organizer/tickets", icon: "ticket" },
-        { label: "Orders & Sales", href: "/dashboard/organizer/orders", icon: "clipboard" },
-        { label: "Analytics", href: "/dashboard/organizer/analytics", icon: "cari" },
-        { label: "Notifications", href: "/dashboard/organizer/notifications", icon: "notif" },
+        {
+          label: "Orders",
+          href: "/organizer/orders",
+          icon: "orders",
+        },
+        {
+          label: "Check-In",
+          href: "/organizer/checkin",
+          icon: "qr",
+        },
+        {
+          label: "Attendees",
+          href: "/organizer/attendees",
+          icon: "Attendees",
+        },
+        {
+          label: "Sales Reports",
+          href: "/organizer/sales-report",
+          icon: "sales",
+        },
+        {
+          label: "Notifications",
+          href: "/organizer/notifications",
+          icon: "notif",
+        },
       ],
     },
     {
       title: "Account",
       items: [
-        { label: "Profile", href: "/dashboard/organizer/profile", icon: "user" },
-        { label: "Settings", href: "/dashboard/organizer/settings", icon: "setting" },
+        {
+          label: "Profile",
+          href: "/organizer/profile",
+          icon: "user",
+        },
+        {
+          label: "Settings",
+          href: "/organizer/settings",
+          icon: "setting",
+        },
       ],
     },
   ],
 
+  // SUPER ADMIN MENU
   super_admin: [
     {
       title: "Main Menu",
       items: [
-        { label: "Dashboard", href: "/dashboard/admin", icon: "home" },
+        {
+          label: "Dashboard",
+          href: "/dashboard/admin",
+          icon: "home",
+        },
       ],
     },
     {
       title: "Management",
       items: [
-        { label: "User Management", href: "/dashboard/admin/users", icon: "user" },
-        { label: "Event Management", href: "/dashboard/admin/events", icon: "ticket" },
-        { label: "Category Management", href: "/dashboard/admin/categories", icon: "clipboard" },
-        { label: "Organizer Management", href: "/dashboard/admin/organizers", icon: "wishlist" },
-        { label: "Transaction Management", href: "/dashboard/admin/transactions", icon: "ticket" },
-        { label: "Reports", href: "/dashboard/admin/reports", icon: "cari" },
-        { label: "Notifications", href: "/dashboard/admin/notifications", icon: "notif" },
+        {
+          label: "User Management",
+          href: "/dashboard/admin/users",
+          icon: "user",
+        },
+        {
+          label: "Event Management",
+          href: "/dashboard/admin/events",
+          icon: "ticket",
+        },
+        {
+          label: "Category Management",
+          href: "/dashboard/admin/categories",
+          icon: "clipboard",
+        },
+        {
+          label: "Organizer Management",
+          href: "/dashboard/admin/organizers",
+          icon: "wishlist",
+        },
+        {
+          label: "Transaction Management",
+          href: "/dashboard/admin/transactions",
+          icon: "ticket",
+        },
+        {
+          label: "Reports",
+          href: "/dashboard/admin/reports",
+          icon: "cari",
+        },
+        {
+          label: "Notifications",
+          href: "/dashboard/admin/notifications",
+          icon: "notif",
+        },
       ],
     },
     {
       title: "Account",
       items: [
-        { label: "Profile", href: "/dashboard/admin/profile", icon: "user" },
-        { label: "Settings", href: "/dashboard/admin/settings", icon: "setting" },
+        {
+          label: "Profile",
+          href: "/dashboard/admin/profile",
+          icon: "user",
+        },
+        {
+          label: "Settings",
+          href: "/dashboard/admin/settings",
+          icon: "setting",
+        },
       ],
     },
   ],
@@ -127,20 +221,26 @@ const roleLabels: Record<Role, string> = {
 
 const dashboardHome: Record<Role, string> = {
   customer: "/customer/home",
-  organizer: "/dashboard/organizer",
+  organizer: "/organizer/dashboard",
   super_admin: "/dashboard/admin",
 };
 
 const profileHref: Record<Role, string> = {
   customer: "/customer/profile",
-  organizer: "/dashboard/organizer/profile",
+  organizer: "/organizer/profile",
   super_admin: "/dashboard/admin/profile",
 };
 
 const settingsHref: Record<Role, string> = {
   customer: "/customer/settings",
-  organizer: "/dashboard/organizer/settings",
+  organizer: "/organizer/settings",
   super_admin: "/dashboard/admin/settings",
+};
+
+const detailOrigin: Record<string, string> = {
+  home: "/customer/home",
+  explore: "/customer/explore",
+  wishlist: "/customer/wishlist",
 };
 
 const svgProps = {
@@ -155,6 +255,7 @@ const svgProps = {
   "aria-hidden": true as const,
 };
 
+// USER ICON
 const UserIcon = () => (
   <svg {...svgProps}>
     <circle cx="12" cy="8" r="4" />
@@ -162,6 +263,7 @@ const UserIcon = () => (
   </svg>
 );
 
+// SETTINGS ICON
 const GearIcon = () => (
   <svg {...svgProps}>
     <circle cx="12" cy="12" r="3" />
@@ -169,6 +271,7 @@ const GearIcon = () => (
   </svg>
 );
 
+// LANGUAGE ICON
 const LangIcon = () => (
   <svg {...svgProps}>
     <path d="M4 5h9M8.5 3v2M6 5c.5 4 3 7 6 8M12 5c-.5 4-3 7-7 9" />
@@ -176,12 +279,14 @@ const LangIcon = () => (
   </svg>
 );
 
+// MOON ICON
 const MoonIcon = ({ small }: { small?: boolean }) => (
   <svg {...svgProps} {...(small ? { width: 14, height: 14 } : {})}>
     <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
   </svg>
 );
 
+// SUN ICON
 const SunIcon = ({ small }: { small?: boolean }) => (
   <svg {...svgProps} {...(small ? { width: 14, height: 14 } : {})}>
     <circle cx="12" cy="12" r="4" />
@@ -189,6 +294,7 @@ const SunIcon = ({ small }: { small?: boolean }) => (
   </svg>
 );
 
+// LOGOUT ICON
 const LogoutIcon = () => (
   <svg {...svgProps}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -196,6 +302,7 @@ const LogoutIcon = () => (
   </svg>
 );
 
+// CHEVRON ICON
 const Chevron = ({ up }: { up: boolean }) => (
   <svg
     width="16"
@@ -207,19 +314,26 @@ const Chevron = ({ up }: { up: boolean }) => (
     strokeLinecap="round"
     strokeLinejoin="round"
     aria-hidden
-    className={`transition-transform duration-200 ${up ? "rotate-180" : ""}`}
+    className={`transition-transform duration-200 ${
+      up ? "rotate-180" : ""
+    }`}
   >
     <path d="m6 9 6 6 6-6" />
   </svg>
 );
 
+// SEGMENTED CONTROL
 function Segmented<T extends string>({
   value,
   options,
   onChange,
 }: {
   value: T;
-  options: { value: T; label: string; content: ReactNode }[];
+  options: {
+    value: T;
+    label: string;
+    content: ReactNode;
+  }[];
   onChange: (value: T) => void;
 }) {
   return (
@@ -248,17 +362,14 @@ function Segmented<T extends string>({
   );
 }
 
-// FOTO PROFIL
+// PROFILE PHOTO
 function getSidebarProfilePhoto(
   photo?: string | null,
   photoVersion?: number
 ) {
   if (!photo) return "/icons/user.png";
-
-  // Base64 tidak boleh ditambahkan API URL atau query cache.
   if (photo.startsWith("data:")) return photo;
 
-  // URL eksternal digunakan langsung.
   const photoBase = photo.startsWith("http")
     ? photo
     : `${API_ORIGIN}${photo.startsWith("/") ? "" : "/"}${photo}`;
@@ -268,6 +379,7 @@ function getSidebarProfilePhoto(
   }`;
 }
 
+// MAIN SIDEBAR
 export default function Sidebar({
   fallbackRole = "customer",
 }: {
@@ -275,6 +387,8 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const from = searchParams.get("from");
 
   const [user, setUser] = useState<SidebarUser | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -284,6 +398,7 @@ export default function Sidebar({
 
   const footerRef = useRef<HTMLDivElement>(null);
 
+  // READ USER AND SAVED PREFERENCES
   useEffect(() => {
     const readUser = () => {
       try {
@@ -296,7 +411,9 @@ export default function Sidebar({
 
         const parsed = JSON.parse(stored);
 
-        if (["customer", "organizer", "super_admin"].includes(parsed.role)) {
+        if (
+          ["customer", "organizer", "super_admin"].includes(parsed.role)
+        ) {
           setUser(parsed);
         } else {
           setUser(null);
@@ -312,8 +429,13 @@ export default function Sidebar({
     const savedLang = localStorage.getItem("lang") as Lang | null;
     const savedTheme = localStorage.getItem("theme") as Theme | null;
 
-    if (savedLang === "EN" || savedLang === "ID") setLang(savedLang);
-    if (savedTheme === "Dark" || savedTheme === "Light") setTheme(savedTheme);
+    if (savedLang === "EN" || savedLang === "ID") {
+      setLang(savedLang);
+    }
+
+    if (savedTheme === "Dark" || savedTheme === "Light") {
+      setTheme(savedTheme);
+    }
 
     window.addEventListener("lynora:user-updated", readUser);
 
@@ -329,17 +451,21 @@ export default function Sidebar({
     };
   }, []);
 
+  // APPLY THEME
   useEffect(() => {
     const root = document.documentElement;
+
     root.classList.toggle("dark", theme === "Dark");
     root.classList.toggle("light", theme === "Light");
   }, [theme]);
 
+  // CLOSE MOBILE MENU AND POPUP ON ROUTE CHANGE
   useEffect(() => {
     setMobileOpen(false);
     setPopupOpen(false);
   }, [pathname]);
 
+  // CLOSE POPUP WHEN CLICKING OUTSIDE OR PRESSING ESCAPE
   useEffect(() => {
     if (!popupOpen) return;
 
@@ -353,7 +479,9 @@ export default function Sidebar({
     };
 
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPopupOpen(false);
+      if (event.key === "Escape") {
+        setPopupOpen(false);
+      }
     };
 
     document.addEventListener("mousedown", onDown);
@@ -367,6 +495,7 @@ export default function Sidebar({
     };
   }, [popupOpen]);
 
+  // LOCK BODY SCROLL WHEN MOBILE MENU IS OPEN
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? "hidden" : "";
 
@@ -378,24 +507,44 @@ export default function Sidebar({
   const role: Role = user?.role || fallbackRole;
   const menuGroups = menus[role];
 
+  // ACTIVE MENU
   const isActive = useCallback(
-    (href: string) =>
-      pathname === href ||
-      (href !== dashboardHome[role] && pathname.startsWith(`${href}/`)),
-    [pathname, role]
+    (href: string) => {
+      if (
+        role === "customer" &&
+        pathname.startsWith("/events/")
+      ) {
+        return detailOrigin[from || ""] === href;
+      }
+
+      return (
+        pathname === href ||
+        (href !== dashboardHome[role] &&
+          pathname.startsWith(`${href}/`))
+      );
+    },
+    [pathname, role, from]
   );
 
+  // CHANGE LANGUAGE
   function chooseLang(value: Lang) {
     setLang(value);
     localStorage.setItem("lang", value);
-    window.dispatchEvent(new CustomEvent("lynora:lang", { detail: value }));
+
+    window.dispatchEvent(
+      new CustomEvent("lynora:lang", {
+        detail: value,
+      })
+    );
   }
 
+  // CHANGE THEME
   function chooseTheme(value: Theme) {
     setTheme(value);
     localStorage.setItem("theme", value);
   }
 
+  // LOGOUT
   function handleLogout() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
@@ -520,6 +669,7 @@ export default function Sidebar({
                       key={item.href}
                       href={item.href}
                       aria-current={selected ? "page" : undefined}
+                      onClick={() => setMobileOpen(false)}
                       className={`group flex min-h-[44px] items-center gap-3 rounded-lg px-3 text-[14px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] ${
                         selected
                           ? "bg-[linear-gradient(90deg,#22D3EE_0%,#332D87_3%,#332D87_100%)] font-bold text-white shadow-[0_4px_10px_rgba(34,211,238,0.16)]"
@@ -527,7 +677,11 @@ export default function Sidebar({
                       }`}
                     >
                       <img
-                        src={selected ? iconActive(item.icon) : icon(item.icon)}
+                        src={
+                          selected
+                            ? iconActive(item.icon)
+                            : icon(item.icon)
+                        }
                         alt=""
                         className="h-6 w-6 shrink-0 object-contain"
                       />
@@ -546,6 +700,7 @@ export default function Sidebar({
           ref={footerRef}
           className="relative shrink-0 border-t border-white/10 bg-[#0B1122]"
         >
+          {/* PROFILE POPUP */}
           {popupOpen && (
             <div
               role="menu"
@@ -554,6 +709,7 @@ export default function Sidebar({
               <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#8B5CF6] to-transparent" />
 
               <div className="relative max-h-[70vh] overflow-y-auto p-2">
+                {/* USER INFO */}
                 <div className="flex items-center gap-2.5 px-1.5 pb-2.5 pt-1.5">
                   <img
                     key={`${profilePhoto}-${user?.photo_version || 0}`}
@@ -579,21 +735,38 @@ export default function Sidebar({
 
                 <div className="mx-1 mb-1.5 h-px bg-white/10" />
 
-                <Link href={profileHref[role]} role="menuitem" className={row}>
+                {/* PROFILE */}
+                <Link
+                  href={profileHref[role]}
+                  role="menuitem"
+                  onClick={() => setPopupOpen(false)}
+                  className={row}
+                >
                   <span className={tile}>
                     <UserIcon />
                   </span>
                   Profile
                 </Link>
 
-                <Link href={settingsHref[role]} role="menuitem" className={row}>
+                {/* SETTINGS */}
+                <Link
+                  href={settingsHref[role]}
+                  role="menuitem"
+                  onClick={() => setPopupOpen(false)}
+                  className={row}
+                >
                   <span className={tile}>
                     <GearIcon />
                   </span>
                   Settings
                 </Link>
 
-                <div role="group" aria-label="Language" className={row}>
+                {/* LANGUAGE */}
+                <div
+                  role="group"
+                  aria-label="Language"
+                  className={row}
+                >
                   <span className={tile}>
                     <LangIcon />
                   </span>
@@ -604,13 +777,26 @@ export default function Sidebar({
                     value={lang}
                     onChange={chooseLang}
                     options={[
-                      { value: "EN", label: "English", content: "EN" },
-                      { value: "ID", label: "Bahasa", content: "ID" },
+                      {
+                        value: "EN",
+                        label: "English",
+                        content: "EN",
+                      },
+                      {
+                        value: "ID",
+                        label: "Bahasa",
+                        content: "ID",
+                      },
                     ]}
                   />
                 </div>
 
-                <div role="group" aria-label="Theme" className={row}>
+                {/* THEME */}
+                <div
+                  role="group"
+                  aria-label="Theme"
+                  className={row}
+                >
                   <span className={tile}>
                     {theme === "Dark" ? <MoonIcon /> : <SunIcon />}
                   </span>
@@ -621,14 +807,23 @@ export default function Sidebar({
                     value={theme}
                     onChange={chooseTheme}
                     options={[
-                      { value: "Dark", label: "Dark", content: <MoonIcon small /> },
-                      { value: "Light", label: "Light", content: <SunIcon small /> },
+                      {
+                        value: "Dark",
+                        label: "Dark",
+                        content: <MoonIcon small />,
+                      },
+                      {
+                        value: "Light",
+                        label: "Light",
+                        content: <SunIcon small />,
+                      },
                     ]}
                   />
                 </div>
 
                 <div className="mx-1 my-1.5 h-px bg-white/10" />
 
+                {/* LOGOUT */}
                 <button
                   type="button"
                   role="menuitem"
@@ -642,6 +837,7 @@ export default function Sidebar({
             </div>
           )}
 
+          {/* PROFILE BUTTON */}
           <button
             type="button"
             onClick={() => setPopupOpen((value) => !value)}
@@ -677,6 +873,7 @@ export default function Sidebar({
 
           <div className="h-px bg-[#41445b]" />
 
+          {/* BRAND FOOTER */}
           <div className="bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text pb-2 pt-1.5 text-center text-[20px] font-medium leading-tight tracking-[3px] text-transparent">
             LYNORA
           </div>

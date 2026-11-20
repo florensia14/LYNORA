@@ -12,6 +12,7 @@ const {
 
 const {
   handleMidtransWebhook,
+  checkPaymentStatus,
 } = require("../controllers/webhookController");
 
 // Webhook Midtrans
@@ -27,6 +28,13 @@ router.post(
   authenticateToken,
   authorizeRoles("customer"),
   createPayment
+);
+
+router.get(
+  "/orders/:id/status",
+  authenticateToken,
+  authorizeRoles("customer"),
+  checkPaymentStatus
 );
 
 module.exports = router;

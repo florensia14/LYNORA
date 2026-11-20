@@ -1,20 +1,23 @@
+
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import CustomerShell from "@/components/layout/CustomerShell";
+
 import {
-  demoOrders,
-  formatCurrency,
-  orderStatusLabel,
-  type OrderStatus,
-} from "@/lib/customer";
+  fetchMyOrders,
+  type ApiMyOrder,
+} from "@/lib/api";
+
+import { formatCurrency } from "@/lib/customer";
 
 /* ------------------------------------------------------------------ */
 /* Types & constants                                                   */
 /* ------------------------------------------------------------------ */
 
-type Order = (typeof demoOrders)[number];
+type Order = ApiMyOrder;
+
 type StatusKey = "paid" | "pending" | "cancelled" | "refunded";
 type Filter = "all" | StatusKey;
 
@@ -26,7 +29,10 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "refunded", label: "Refunded" },
 ];
 
-const STATUS_STYLES: Record<StatusKey, { badge: string; label: string }> = {
+const STATUS_STYLES: Record<
+  StatusKey,
+  { badge: string; label: string }
+> = {
   paid: {
     badge: "bg-[#123A43] text-[#42D9E8] border-[#246C7C]/50",
     label: "Payment Successful",
@@ -47,8 +53,31 @@ const STATUS_STYLES: Record<StatusKey, { badge: string; label: string }> = {
 
 const FALLBACK_POSTER = "/images/hero/home.jpg";
 
-const statusKey = (status: OrderStatus) =>
-  String(status).toLowerCase() as StatusKey;
+function statusKey(status: string): StatusKey {
+  const normalized = String(status).toLowerCase();
+
+  if (normalized === "paid") return "paid";
+  if (normalized === "pending") return "pending";
+  if (normalized === "refunded") return "refunded";
+
+  return "cancelled";
+}
+
+function formatOrderDate(date: string) {
+  if (!date) return "-";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "-";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsedDate);
+}
 
 /* ------------------------------------------------------------------ */
 /* Icon                                                                */
@@ -61,27 +90,36 @@ const ICONS = {
       <path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4" />
     </>
   ),
+
   check: <path d="m5 12 4 4L19 6" />,
+
   clock: (
     <>
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 2" />
     </>
   ),
-  dollar: <path d="M12 2v20M17 5H9a3 3 0 0 0 0 6h6a3 3 0 0 1 0 6H6" />,
+
+  dollar: (
+    <path d="M12 2v20M17 5H9a3 3 0 0 0 0 6h6a3 3 0 0 1 0 6H6" />
+  ),
+
   ticket: (
     <>
       <path d="M3 7a2 2 0 0 0 0 4v2a2 2 0 0 0 0 4h18v-4a2 2 0 0 1 0-4V5H3z" />
       <path d="M13 5v2m0 3v2m0 3v2" />
     </>
   ),
+
   eye: (
     <>
       <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
       <circle cx="12" cy="12" r="3" />
     </>
   ),
+
   close: <path d="m18 6-12 12M6 6l12 12" />,
+
   arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
 } satisfies Record<string, ReactNode>;
 
@@ -114,18 +152,16 @@ function Icon({
 /* Small building blocks                                               */
 /* ------------------------------------------------------------------ */
 
-function StatusBadge({ status }: { status: OrderStatus }) {
+function StatusBadge({ status }: { status: string }) {
   const key = statusKey(status);
   const style = STATUS_STYLES[key];
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-bold ${
-        style?.badge ?? "border-white/10 bg-white/5 text-[#AAB0C5]"
-      }`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-1 text-[9px] font-bold ${style.badge}`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {style?.label ?? orderStatusLabel[status]}
+      {style.label}
     </span>
   );
 }
@@ -140,7 +176,10 @@ function Field({
   return (
     <div>
       <p className="text-[9px] text-[#AAB0C5]">{label}</p>
-      <div className="mt-1 text-[10px] font-semibold text-white">{children}</div>
+
+      <div className="mt-1 text-[10px] font-semibold text-white">
+        {children}
+      </div>
     </div>
   );
 }
@@ -162,39 +201,57 @@ function StatCard({
         <p className="text-[10px] font-semibold text-[#AAB0C5] sm:text-xs">
           {title}
         </p>
+
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#8B5CF6]/15 text-[#A78BFA]">
           <Icon name={icon} />
         </span>
       </div>
+
       <h3 className="mt-2 text-lg font-extrabold text-white sm:text-xl">
         {value}
       </h3>
-      <p className="mt-1 text-[9px] text-[#AAB0C5]">{description}</p>
+
+      <p className="mt-1 text-[9px] text-[#AAB0C5]">
+        {description}
+      </p>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Order details & card                                                */
+/* Order details                                                       */
 /* ------------------------------------------------------------------ */
 
 function OrderDetails({ order }: { order: Order }) {
   return (
     <div className="mt-3 rounded-lg border border-[#908FA0]/20 bg-[#0C1122] p-3">
-      <h4 className="mb-3 text-xs font-bold text-white">Order Information</h4>
+      <h4 className="mb-3 text-xs font-bold text-white">
+        Order Information
+      </h4>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Field label="Order Number">
           <span className="break-all">{order.id}</span>
         </Field>
-        <Field label="Purchase Date">{order.date}</Field>
-        <Field label="Payment Method">{order.method}</Field>
-        <Field label="Ticket Quantity">{order.quantity} Tickets</Field>
+
+        <Field label="Purchase Date">
+          {formatOrderDate(order.date)}
+        </Field>
+
+        <Field label="Payment Method">
+          {order.method || "Not available"}
+        </Field>
+
+        <Field label="Ticket Quantity">
+          {order.quantity} Tickets
+        </Field>
+
         <Field label="Total Payment">
           <span className="font-bold text-[#A78BFA]">
-            {formatCurrency(order.total)}
+            {formatCurrency(Number(order.total))}
           </span>
         </Field>
+
         <Field label="Order Status">
           <StatusBadge status={order.status} />
         </Field>
@@ -202,6 +259,10 @@ function OrderDetails({ order }: { order: Order }) {
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Order card                                                          */
+/* ------------------------------------------------------------------ */
 
 function OrderCard({
   order,
@@ -221,7 +282,11 @@ function OrderCard({
         <Field label="Order No.">
           <span className="font-bold">{order.id}</span>
         </Field>
-        <Field label="Purchase Date">{order.date}</Field>
+
+        <Field label="Purchase Date">
+          {formatOrderDate(order.date)}
+        </Field>
+
         <StatusBadge status={order.status} />
       </div>
 
@@ -241,25 +306,32 @@ function OrderCard({
             <h3 className="line-clamp-2 text-xs font-extrabold leading-relaxed text-white sm:text-sm">
               {order.event_name}
             </h3>
+
             <p className="mt-1 text-[9px] text-[#AAB0C5]">
               {order.quantity} Tickets · LYNORA Passport
             </p>
+
             <div className="mt-2 flex flex-wrap gap-1.5">
               <span className="rounded-full border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 px-2 py-0.5 text-[8px] font-semibold text-[#B9A4FF]">
                 E-Ticket
               </span>
+
               <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[8px] font-semibold text-[#AAB0C5]">
-                {order.method}
+                {order.method || "Not available"}
               </span>
             </div>
           </div>
         </div>
 
         <div className="shrink-0 sm:min-w-[140px] sm:text-right">
-          <p className="text-[9px] text-[#AAB0C5]">Total Payment</p>
-          <p className="mt-1 text-base font-extrabold text-white">
-            {formatCurrency(order.total)}
+          <p className="text-[9px] text-[#AAB0C5]">
+            Total Payment
           </p>
+
+          <p className="mt-1 text-base font-extrabold text-white">
+            {formatCurrency(Number(order.total))}
+          </p>
+
           <p className="mt-0.5 text-[9px] text-[#AAB0C5]">
             {order.quantity} tickets · incl. tax
           </p>
@@ -269,9 +341,15 @@ function OrderCard({
       {/* Payment bar + actions */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#908FA0]/20 bg-[#0C1122] px-3 py-2.5 sm:px-4">
         <div className="flex flex-wrap items-center gap-2 text-[9px]">
-          <span className="font-bold text-white">{order.method}</span>
+          <span className="font-bold text-white">
+            {order.method || "Not available"}
+          </span>
+
           <span className="text-[#908FA0]">·</span>
-          <span className="text-[#AAB0C5]">Order: {order.id}</span>
+
+          <span className="text-[#AAB0C5]">
+            Order: {order.id}
+          </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
@@ -300,12 +378,17 @@ function OrderCard({
                 : "border-[#908FA0]/40 text-[#AAB0C5] hover:border-[#8B5CF6] hover:text-white"
             }`}
           >
-            <Icon name={expanded ? "close" : "eye"} className="h-3 w-3" />
+            <Icon
+              name={expanded ? "close" : "eye"}
+              className="h-3 w-3"
+            />
+
             {expanded ? "Close Details" : "View Details"}
           </button>
         </div>
       </div>
 
+      {/* Expanded details */}
       {expanded && (
         <div className="px-3 pb-3 sm:px-4">
           <OrderDetails order={order} />
@@ -315,25 +398,84 @@ function OrderCard({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Empty state                                                         */
+/* ------------------------------------------------------------------ */
+
 function EmptyOrders() {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-[#908FA0]/20 bg-[#171B26] px-5 py-14 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#8B5CF6]/15 text-[#A78BFA]">
         <Icon name="clipboard" className="h-8 w-8" />
       </div>
+
       <h3 className="mt-4 text-base font-extrabold text-white">
         No Orders Found
       </h3>
+
       <p className="mt-2 max-w-xs text-xs leading-relaxed text-[#AAB0C5]">
-        You don&apos;t have any orders in this category yet. Explore concerts and
-        get your tickets!
+        You don&apos;t have any orders in this category yet. Explore
+        concerts and get your tickets!
       </p>
+
       <Link
         href="/customer/explore"
         className="mt-5 rounded-lg bg-[#8B5CF6] px-5 py-2.5 text-xs font-bold text-white transition hover:bg-[#7543E8]"
       >
         Explore Concerts
       </Link>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Loading state                                                       */
+/* ------------------------------------------------------------------ */
+
+function LoadingOrders() {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-[#908FA0]/20 bg-[#171B26] px-5 py-14 text-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#8B5CF6]/20 border-t-[#8B5CF6]" />
+
+      <p className="mt-4 text-xs font-semibold text-white">
+        Loading your orders...
+      </p>
+
+      <p className="mt-1 text-[10px] text-[#AAB0C5]">
+        Please wait a moment.
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Error state                                                         */
+/* ------------------------------------------------------------------ */
+
+function ErrorOrders({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-red-500/20 bg-[#171B26] px-5 py-10 text-center">
+      <p className="text-sm font-bold text-red-400">
+        Unable to Load Orders
+      </p>
+
+      <p className="mt-2 text-xs text-[#AAB0C5]">
+        {message}
+      </p>
+
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-4 rounded-lg bg-[#8B5CF6] px-5 py-2 text-xs font-bold text-white transition hover:bg-[#7543E8]"
+      >
+        Try Again
+      </button>
     </div>
   );
 }
@@ -346,38 +488,99 @@ export default function MyOrdersPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const stats = useMemo(() => {
-    const paid = demoOrders.filter((o) => statusKey(o.status) === "paid");
-    return {
-      total: demoOrders.length,
-      paid: paid.length,
-      pending: demoOrders.filter((o) => statusKey(o.status) === "pending")
-        .length,
-      spent: paid.reduce((sum, o) => sum + o.total, 0),
-    };
-  }, []);
+  const [myOrders, setMyOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
+  /* Fetch orders from API */
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadOrders = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const data = await fetchMyOrders();
+
+        if (isMounted) {
+          setMyOrders(data);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load your orders."
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadOrders();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [retryCount]);
+
+  /* Statistics */
+  const stats = useMemo(() => {
+    const paidOrders = myOrders.filter(
+      (order) => statusKey(order.status) === "paid"
+    );
+
+    return {
+      total: myOrders.length,
+      paid: paidOrders.length,
+      pending: myOrders.filter(
+        (order) => statusKey(order.status) === "pending"
+      ).length,
+      spent: paidOrders.reduce(
+        (sum, order) => sum + Number(order.total || 0),
+        0
+      ),
+    };
+  }, [myOrders]);
+
+  /* Available filters */
   const availableFilters = useMemo(
     () =>
       FILTERS.filter(
-        (f) =>
-          f.key === "all" ||
-          demoOrders.some((o) => statusKey(o.status) === f.key)
+        (item) =>
+          item.key === "all" ||
+          myOrders.some(
+            (order) => statusKey(order.status) === item.key
+          )
       ),
-    []
+    [myOrders]
   );
 
+  /* Filtered orders */
   const orders = useMemo(
     () =>
       filter === "all"
-        ? demoOrders
-        : demoOrders.filter((o) => statusKey(o.status) === filter),
-    [filter]
+        ? myOrders
+        : myOrders.filter(
+            (order) => statusKey(order.status) === filter
+          ),
+    [myOrders, filter]
   );
 
+  /* Change filter */
   const changeFilter = (next: Filter) => {
     setFilter(next);
     setExpandedId(null);
+  };
+
+  /* Retry fetching */
+  const handleRetry = () => {
+    setRetryCount((current) => current + 1);
   };
 
   return (
@@ -396,6 +599,7 @@ export default function MyOrdersPage() {
             <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">
               MY ORDERS
             </h1>
+
             <span className="rounded-md border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 px-3 py-1.5 text-[10px] font-bold text-[#B9A4FF]">
               {stats.total} Total Orders
             </span>
@@ -406,7 +610,7 @@ export default function MyOrdersPage() {
           </p>
         </section>
 
-        {/* Stats */}
+        {/* Statistics */}
         <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatCard
             title="Total Orders"
@@ -414,18 +618,21 @@ export default function MyOrdersPage() {
             icon="clipboard"
             description="All your purchases"
           />
+
           <StatCard
             title="Successful Payments"
             value={stats.paid}
             icon="check"
             description="Successfully paid orders"
           />
+
           <StatCard
             title="Pending Payment"
             value={stats.pending}
             icon="clock"
             description="Waiting for payment"
           />
+
           <StatCard
             title="Total Spent"
             value={formatCurrency(stats.spent)}
@@ -441,11 +648,13 @@ export default function MyOrdersPage() {
               <h2 className="text-base font-extrabold text-white">
                 Order History
               </h2>
+
               <p className="mt-1 text-[10px] text-[#AAB0C5]">
                 {orders.length} orders displayed
               </p>
             </div>
 
+            {/* Filters */}
             <div className="flex flex-wrap items-center gap-1.5">
               {availableFilters.map((item) => (
                 <button
@@ -464,17 +673,28 @@ export default function MyOrdersPage() {
             </div>
           </div>
 
-          {orders.length > 0 ? (
+          {/* Content */}
+          {loading ? (
+            <LoadingOrders />
+          ) : error ? (
+            <ErrorOrders
+              message={error}
+              onRetry={handleRetry}
+            />
+          ) : orders.length > 0 ? (
             <div className="space-y-3">
               {orders.map((order) => {
-                const id = String(order.id);
+                const id = String(order.order_id);
+
                 return (
                   <OrderCard
                     key={id}
                     order={order}
                     expanded={expandedId === id}
                     onToggle={() =>
-                      setExpandedId((current) => (current === id ? null : id))
+                      setExpandedId((current) =>
+                        current === id ? null : id
+                      )
                     }
                   />
                 );
@@ -491,10 +711,12 @@ export default function MyOrdersPage() {
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#8B5CF6]/15 text-[#A78BFA]">
               <Icon name="ticket" className="h-5 w-5" />
             </div>
+
             <div>
               <h3 className="text-xs font-bold text-white">
                 Ready for your next concert?
               </h3>
+
               <p className="mt-1 text-[10px] text-[#AAB0C5]">
                 Discover more events and unforgettable experiences.
               </p>
@@ -506,6 +728,7 @@ export default function MyOrdersPage() {
             className="flex shrink-0 items-center gap-2 rounded-lg bg-[#8B5CF6] px-4 py-2.5 text-[10px] font-extrabold text-white transition hover:bg-[#7543E8]"
           >
             EXPLORE CONCERTS
+
             <Icon name="arrow" className="h-3.5 w-3.5" />
           </Link>
         </section>

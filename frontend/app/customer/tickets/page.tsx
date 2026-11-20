@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import CustomerShell from "@/components/layout/CustomerShell";
 import { fetchMyTickets, type ApiMyTicket } from "@/lib/api";
+import { QRCodeSVG } from "qrcode.react";
+
 
 const GRADIENT = "bg-[linear-gradient(90deg,#8B5CF6_0%,#22D3EE_31%)]";
 const GRADIENT_V = "bg-[linear-gradient(180deg,#8B5CF6_0%,#22D3EE_100%)]";
@@ -220,7 +222,6 @@ function MainTicketCard({ ticket }: { ticket: ApiMyTicket }) {
   );
 }
 
-// QR CARD
 
 function QrCard({ ticket }: { ticket: ApiMyTicket }) {
   return (
@@ -236,18 +237,16 @@ function QrCard({ ticket }: { ticket: ApiMyTicket }) {
         </span>
       </div>
 
-      <div className="mt-5 flex h-[232px] w-[232px] flex-col items-center justify-center rounded-lg border border-dashed border-[#676D89] bg-white p-5 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#8B5CF6]/10">
-          <span className="text-3xl text-[#8B5CF6]">▦</span>
-        </div>
-
-        <p className="mt-3 text-sm font-bold text-[#171B26]">
-          QR Code Unavailable
-        </p>
-
-        <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
-          Your secure ticket QR code will appear here once verification is enabled.
-        </p>
+      {/* REAL QR CODE */}
+      <div className="mt-5 flex h-[232px] w-[232px] items-center justify-center rounded-lg bg-white p-4">
+        <QRCodeSVG
+          value={ticket.ticket_code}
+          size={200}
+          level="H"
+          bgColor="#FFFFFF"
+          fgColor="#0B1020"
+          marginSize={2}
+        />
       </div>
 
       <p className="mt-4 text-center text-[11px] leading-relaxed text-[#AAB0C5]">
@@ -255,7 +254,7 @@ function QrCard({ ticket }: { ticket: ApiMyTicket }) {
           Official LYNORA Ticket
         </span>
         <br />
-        Ticket QR validation is currently being prepared.
+        Scan your ticket QR code for identification.
       </p>
 
       <div className="mt-4 max-w-full truncate rounded-full border border-[#676D89] bg-[#0C1122] px-6 py-2 text-xs font-semibold tracking-wide text-white">
@@ -264,6 +263,7 @@ function QrCard({ ticket }: { ticket: ApiMyTicket }) {
     </aside>
   );
 }
+
 
 // OTHER ACTIVE TICKETS
 

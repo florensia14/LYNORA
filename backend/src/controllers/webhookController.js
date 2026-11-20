@@ -1,4 +1,3 @@
-
 const db = require("../config/database");
 const midtransConfig = require("../config/midtrans");
 const crypto = require("crypto");
@@ -132,7 +131,9 @@ async function issueTickets(connection, orderId) {
     const existingCount = Number(ticketRows[0]?.total || 0);
 
     if (existingCount > quantity) {
-      throw new Error(`Jumlah tiket melebihi quantity order item ${item.id}`);
+      throw new Error(
+        `Jumlah tiket melebihi quantity order item ${item.id}`
+      );
     }
 
     const missingCount = quantity - existingCount;
@@ -463,8 +464,6 @@ async function handleMidtransWebhook(req, res) {
     );
 
     // 12. Update ringkasan pembayaran.
-    // Notifikasi pending dari percobaan lama tidak boleh
-    // menurunkan status pembayaran yang sudah berhasil.
     const paymentAlreadySuccessful = payment.status === "success";
 
     if (
@@ -512,7 +511,9 @@ async function handleMidtransWebhook(req, res) {
 
     // 13. Pembayaran berhasil.
     if (paymentStatus === "success") {
-      if (["expired", "cancelled", "refunded"].includes(order.status)) {
+      if (
+        ["expired", "cancelled", "refunded"].includes(order.status)
+      ) {
         await connection.commit();
         transactionStarted = false;
 
@@ -623,6 +624,413 @@ async function handleMidtransWebhook(req, res) {
   }
 }
 
+async function checkPaymentStatus(req, res) {
+  let connection;
+  let transactionStarted = false;
+
+  try {
+    const orderId = req.params.id;
+    const customerId = req.user.id;
+
+    // Pastikan order milik customer yang sedang login.
+    const [orders] = await db.execute(
+      `SELECT id, order_code, customer_id, total_amount, status
+       FROM orders
+       WHERE id = ? AND customer_id = ?`,
+      [orderId, customerId]
+    );
+
+    if (!orders.length) {
+      return res.status(404).json({
+        message: "Order tidak ditemukan",
+      });
+    }
+
+    const order = orders[0];
+
+    // Ambil percobaan pembayaran terbaru.
+    const [attempts] = await db.execute(
+      `SELECT *
+       FROM payment_attempts
+       WHERE order_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [orderId]
+    );
+
+    if (!attempts.length) {
+      return res.status(404).json({
+        message: "Percobaan pembayaran tidak ditemukan",
+      });
+    }
+
+    const attempt = attempts[0];
+
+    // Jika status percobaan sudah success, tetap pastikan order dan tiket
+    // sudah tersinkron. Ini menangani kasus status success tersimpan,
+    // tetapi proses penerbitan tiket sebelumnya belum sempat dilakukan.
+    if (attempt.status === "success") {
+      connection = await db.getConnection();
+
+      await connection.beginTransaction();
+      transactionStarted = true;
+
+      const [lockedOrders] = await connection.execute(
+        `SELECT id, status
+         FROM orders
+         WHERE id = ? AND customer_id = ?
+         FOR UPDATE`,
+        [orderId, customerId]
+      );
+
+      if (!lockedOrders.length) {
+        throw new Error(
+          "Order tidak ditemukan saat sinkronisasi tiket"
+        );
+      }
+
+      const currentOrder = lockedOrders[0];
+
+      if (
+        ["expired", "cancelled", "refunded"].includes(
+          currentOrder.status
+        )
+      ) {
+        await connection.commit();
+        transactionStarted = false;
+
+        return res.status(200).json({
+          message:
+            "Pembayaran tercatat berhasil, tetapi order berstatus nonaktif dan perlu pemeriksaan",
+          payment_status: "success",
+          order_status: currentOrder.status,
+        });
+      }
+
+      await connection.execute(
+        `UPDATE orders
+         SET status = 'paid'
+         WHERE id = ?`,
+        [orderId]
+      );
+
+      const totalIssued = await issueTickets(
+        connection,
+        orderId
+      );
+
+      await connection.commit();
+      transactionStarted = false;
+
+      return res.status(200).json({
+        message:
+          "Pembayaran sudah berhasil dan tiket telah disinkronkan",
+        payment_status: "success",
+        order_status: "paid",
+        tickets_issued: totalIssued,
+      });
+    }
+
+    // Ambil status terbaru langsung dari Midtrans.
+    const statusResponse = await midtransConfig
+      .getCoreApi()
+      .transaction.status(attempt.midtrans_order_id);
+
+    if (!statusResponse) {
+      return res.status(502).json({
+        message: "Gagal mendapatkan status dari Midtrans",
+      });
+    }
+
+    const {
+      order_id,
+      transaction_id,
+      transaction_status,
+      fraud_status,
+      payment_type,
+      gross_amount,
+      currency,
+      transaction_time,
+    } = statusResponse;
+
+    if (
+      String(order_id) !== String(attempt.midtrans_order_id) ||
+      !transaction_id ||
+      gross_amount === undefined ||
+      gross_amount === null
+    ) {
+      return res.status(400).json({
+        message: "Data transaksi Midtrans tidak valid",
+      });
+    }
+
+    if (currency && currency !== "IDR") {
+      return res.status(400).json({
+        message: "Mata uang transaksi tidak sesuai",
+      });
+    }
+
+    if (
+      !isAmountValid(gross_amount, order.total_amount) ||
+      !isAmountValid(gross_amount, attempt.amount)
+    ) {
+      return res.status(400).json({
+        message: "Nominal pembayaran tidak sesuai",
+      });
+    }
+
+    if (
+      attempt.transaction_id &&
+      attempt.transaction_id !== transaction_id
+    ) {
+      return res.status(400).json({
+        message: "ID transaksi tidak sesuai",
+      });
+    }
+
+    const mapped = mapTransactionStatus(
+      transaction_status,
+      fraud_status
+    );
+
+    if (!mapped) {
+      return res.status(200).json({
+        message: "Status transaksi belum dapat diproses",
+        payment_status: attempt.status,
+        order_status: order.status,
+      });
+    }
+
+    const { paymentStatus, orderStatus } = mapped;
+
+    connection = await db.getConnection();
+
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [lockedOrders] = await connection.execute(
+      `SELECT *
+       FROM orders
+       WHERE id = ?
+       FOR UPDATE`,
+      [orderId]
+    );
+
+    const [lockedAttempts] = await connection.execute(
+      `SELECT *
+       FROM payment_attempts
+       WHERE id = ?
+       FOR UPDATE`,
+      [attempt.id]
+    );
+
+    const [paymentRows] = await connection.execute(
+      `SELECT *
+       FROM payments
+       WHERE id = ?
+         AND order_id = ?
+       FOR UPDATE`,
+      [attempt.payment_id, orderId]
+    );
+
+    if (
+      !lockedOrders.length ||
+      !lockedAttempts.length ||
+      !paymentRows.length
+    ) {
+      throw new Error("Data pembayaran tidak ditemukan");
+    }
+
+    const currentOrder = lockedOrders[0];
+    const currentAttempt = lockedAttempts[0];
+    const payment = paymentRows[0];
+
+    // Jangan menurunkan status transaksi yang sudah terminal.
+    if (
+      currentAttempt.status === "refunded" ||
+      (
+        currentAttempt.status === "success" &&
+        paymentStatus !== "refunded"
+      )
+    ) {
+      await connection.commit();
+      transactionStarted = false;
+
+      return res.status(200).json({
+        message: "Status pembayaran sudah diproses",
+        payment_status: currentAttempt.status,
+        order_status: currentOrder.status,
+      });
+    }
+
+    await connection.execute(
+      `UPDATE payment_attempts
+       SET status = ?,
+           transaction_id = ?,
+           payment_type = ?,
+           transaction_status = ?,
+           fraud_status = ?,
+           transaction_time = ?,
+           settled_at = CASE
+             WHEN ? = 'success'
+             THEN COALESCE(settled_at, ?)
+             ELSE settled_at
+           END,
+           expired_at = CASE
+             WHEN ? = 'expired'
+             THEN COALESCE(expired_at, NOW())
+             ELSE expired_at
+           END,
+           midtrans_response = ?
+       WHERE id = ?`,
+      [
+        paymentStatus,
+        transaction_id,
+        payment_type || null,
+        transaction_status,
+        fraud_status || null,
+        transaction_time || null,
+        paymentStatus,
+        transaction_time || new Date(),
+        paymentStatus,
+        JSON.stringify(statusResponse),
+        currentAttempt.id,
+      ]
+    );
+
+    if (
+      payment.status !== "success" ||
+      paymentStatus === "success" ||
+      paymentStatus === "refunded"
+    ) {
+      await connection.execute(
+        `UPDATE payments
+         SET status = ?,
+             midtrans_order_id = ?,
+             transaction_id = ?,
+             payment_type = ?,
+             transaction_status = ?,
+             fraud_status = ?,
+             transaction_time = ?,
+             settled_at = CASE
+               WHEN ? = 'success'
+               THEN COALESCE(settled_at, ?)
+               ELSE settled_at
+             END,
+             expired_at = CASE
+               WHEN ? = 'expired'
+               THEN COALESCE(expired_at, NOW())
+               ELSE expired_at
+             END,
+             midtrans_response = ?
+         WHERE id = ?`,
+        [
+          paymentStatus,
+          currentAttempt.midtrans_order_id,
+          transaction_id,
+          payment_type || null,
+          transaction_status,
+          fraud_status || null,
+          transaction_time || null,
+          paymentStatus,
+          transaction_time || new Date(),
+          paymentStatus,
+          JSON.stringify(statusResponse),
+          payment.id,
+        ]
+      );
+    }
+
+    if (paymentStatus === "success") {
+      if (
+        ["expired", "cancelled", "refunded"].includes(
+          currentOrder.status
+        )
+      ) {
+        throw new Error(
+          "Pembayaran berhasil pada order yang tidak aktif"
+        );
+      }
+
+      await connection.execute(
+        `UPDATE orders
+         SET status = 'paid'
+         WHERE id = ?`,
+        [orderId]
+      );
+
+      await issueTickets(connection, orderId);
+    } else if (paymentStatus === "refunded") {
+      await connection.execute(
+        `UPDATE orders
+         SET status = 'refunded'
+         WHERE id = ?`,
+        [orderId]
+      );
+
+      await connection.execute(
+        `UPDATE tickets
+         SET status = 'refunded'
+         WHERE status = 'valid'
+           AND order_item_id IN (
+             SELECT id
+             FROM order_items
+             WHERE order_id = ?
+           )`,
+        [orderId]
+      );
+    } else if (
+      !["paid", "refunded"].includes(currentOrder.status)
+    ) {
+      await connection.execute(
+        `UPDATE orders
+         SET status = ?
+         WHERE id = ?`,
+        [orderStatus, orderId]
+      );
+    }
+
+    await connection.commit();
+    transactionStarted = false;
+
+    return res.status(200).json({
+      message: "Status pembayaran berhasil diperiksa",
+      payment_status: paymentStatus,
+      order_status:
+        paymentStatus === "success"
+          ? "paid"
+          : paymentStatus === "refunded"
+            ? "refunded"
+            : orderStatus,
+    });
+  } catch (error) {
+    if (connection && transactionStarted) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error(
+          "[payment-status] Rollback error:",
+          rollbackError.message
+        );
+      }
+    }
+
+    console.error(
+      "[payment-status] Error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      message: "Gagal memeriksa status pembayaran",
+    });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+}
+
 module.exports = {
   handleMidtransWebhook,
+  checkPaymentStatus,
 };

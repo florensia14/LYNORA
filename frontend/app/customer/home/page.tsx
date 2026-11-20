@@ -931,7 +931,7 @@ function ConcertCard({
 
   ).join(", ");
 
-  const goToDetail = () => router.push(`/events/${concert.id}`);
+  const goToDetail = () => router.push(`/events/${concert.id}?from=home`);
 
   return (
 
@@ -1450,11 +1450,8 @@ function HeroBanner({
               <div className={s.actions}>
 
                 <Link
-
-                  href={`/events/${activeConcert.id}`}
-
+                  href={`/events/${activeConcert.id}?from=home`}
                   className={cx(s.btnBase, s.btnView)}
-
                 >
 
                   <img src="/icons/ticket (1).png" alt="" className={s.btnIcon} />

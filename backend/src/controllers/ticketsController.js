@@ -11,6 +11,7 @@ const getMyTickets = async (req, res) => {
       SELECT
         t.id AS ticket_id,
         t.ticket_code,
+        t.qr_token,
         t.status AS ticket_status,
         t.issued_at,
 

@@ -87,9 +87,18 @@ export default function LoginPage() {
       setIsError(false);
       setMessage("Login successful! Redirecting...");
 
-      // Redirect to main page
+      // Redirect based on user role
+      const role = result.user?.role;
+
+      const redirectPath =
+        role === "organizer"
+          ? "/organizer/dashboard"
+          : role === "super_admin"
+            ? "/dashboard/admin"
+            : "/customer/home";
+
       setTimeout(() => {
-        router.push("/customer/home");
+        router.replace(redirectPath);
       }, 800);
     } catch (error) {
       setIsError(true);
@@ -245,4 +254,4 @@ export default function LoginPage() {
       </section>
     </main>
   );
-}
+}

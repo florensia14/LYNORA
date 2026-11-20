@@ -4,6 +4,7 @@ export const API_URL =
 
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
 
+
 export type User = {
   id: number;
   name: string;
@@ -11,6 +12,7 @@ export type User = {
   role: string;
   phone?: string | null;
   profile_photo?: string | null;
+  cover_photo?: string | null;
   photo_version?: number;
   created_at?: string;
   unreadNotifications?: number;
@@ -28,6 +30,9 @@ export type ConcertArtist = {
   name: string;
   country?: string | null;
   photo?: string | null;
+  photo_url?: string | null;
+  image_url?: string | null;
+  bio?: string | null;
 };
 
 export type Concert = {

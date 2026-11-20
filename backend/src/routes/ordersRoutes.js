@@ -1,15 +1,21 @@
-
 const express = require("express");
 const router = express.Router();
 
 const {
   checkout,
+  getMyOrders,
 } = require("../controllers/ordersController");
 
 const authenticateToken = require("../middlewares/authMiddleware");
 const authorizeRoles = require("../middlewares/authorizeRoles");
 
-// Customer checkout tiket
+router.get(
+  "/my-orders",
+  authenticateToken,
+  authorizeRoles("customer"),
+  getMyOrders
+);
+
 router.post(
   "/checkout",
   authenticateToken,

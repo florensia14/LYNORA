@@ -439,7 +439,7 @@ function EventCard({
   return (
     <article className="group flex h-full min-w-0 flex-col overflow-hidden rounded-xl border border-[#8B5CF6]/30 bg-[#202A4F] transition-[border-color,box-shadow,transform] duration-300 hover:-translate-y-1 hover:border-[#8B5CF6]/70 hover:shadow-[0_12px_28px_rgba(91,52,170,0.28)]">
       <div className="relative aspect-[2/1] w-full overflow-hidden bg-[#171D37]">
-        <Link href={`/customer/explore/${concert.id}`} className="relative block h-full w-full">
+        <Link href={`/events/${concert.id}?from=wishlist`} className="relative block h-full w-full">
           {poster ? (
             <>
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-[#31245D] via-[#202A4F] to-[#0B1122] px-4 text-center">
@@ -486,7 +486,7 @@ function EventCard({
       </div>
 
       <div className="flex flex-1 flex-col px-3 py-2.5">
-        <Link href={`/customer/explore/${concert.id}`}>
+        <Link href={`/events/${concert.id}?from=wishlist`}>
           <h3 className="line-clamp-2 text-[15px] font-extrabold leading-snug text-white transition group-hover:text-white sm:text-base">
             {concert.name}
           </h3>

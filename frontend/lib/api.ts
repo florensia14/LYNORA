@@ -12,6 +12,12 @@ type EventsResponse = {
   total?: number;
   events?: ApiEvent[];
 };
+
+type EventDetailResponse = {
+  message?: string;
+  event?: ApiEvent;
+};
+
 export type ApiMyTicket = {
   ticket_id: number;
   ticket_code: string;
@@ -110,6 +116,49 @@ export async function fetchConcerts(): Promise<Concert[]> {
 }
 
 /**
+ * Loads one published event by ID.
+ * GET /api/events/:id
+ */
+
+export async function fetchConcertById(id: string | number): Promise<Concert> {
+  if (!String(id).trim() || !Number.isFinite(Number(id))) {
+    throw new Error("ID konser tidak valid.");
+  }
+
+  const response = await fetch(
+    `${API_URL}/events/${encodeURIComponent(String(id))}`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    }
+  );
+
+  let payload: EventDetailResponse;
+
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error("Respons server detail konser tidak valid.");
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      payload.message ||
+        `Gagal mengambil detail konser (HTTP ${response.status}).`
+    );
+  }
+
+  if (!payload.event) {
+    throw new Error("Data detail konser tidak ditemukan.");
+  }
+
+  return normalizeEvent(payload.event);
+}
+
+/**
  * Loads tickets belonging to the currently authenticated customer.
  * GET /api/tickets/my-tickets
  */
@@ -176,3 +225,178 @@ export function isInCity(concert: Concert, city: string): boolean {
   if (!keyword) return true;
   return `${concert.venue_name ?? ""} ${concert.venue_address ?? ""}`.toLowerCase().includes(keyword);
 }
+
+export type CheckoutItem = {
+  ticket_category_id: number;
+  quantity: number;
+};
+
+export type CreateOrderResponse = {
+  message: string;
+  order: {
+    id: number;
+    order_code: string;
+    total_amount: number;
+    status: string;
+    expires_at: string;
+    items: {
+      ticketId: number;
+      quantity: number;
+      price: number;
+      subtotal: number;
+    }[];
+  };
+};
+
+export type CreatePaymentResponse = {
+  message: string;
+  payment: {
+    snap_token: string;
+    redirect_url: string | null;
+  };
+};
+
+function getAuthToken() {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
+
+export async function createCheckoutOrder(
+  items: CheckoutItem[],
+): Promise<CreateOrderResponse> {
+  const token = getAuthToken();
+
+  if (!token) {
+    throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+  }
+
+  const response = await fetch(`${API_URL}/orders/checkout`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ items }),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.message || "Gagal membuat pesanan.");
+  }
+
+  return payload;
+}
+
+export async function createOrderPayment(
+  orderId: number,
+): Promise<CreatePaymentResponse> {
+  const token = getAuthToken();
+
+  if (!token) {
+    throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+  }
+
+  const response = await fetch(
+    `${API_URL}/payments/orders/${orderId}/payment`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.message || "Gagal membuat pembayaran.");
+  }
+
+  return payload;
+}
+
+
+export type CheckPaymentStatusResponse = {
+  message: string;
+  payment_status: string;
+  order_status: string;
+};
+
+/**
+ * Checks the latest Midtrans payment status.
+ * GET /api/payments/orders/:id/status
+ */
+export async function checkPaymentStatus(
+  orderId: number,
+): Promise<CheckPaymentStatusResponse> {
+  const token = getAuthToken();
+
+  if (!token) {
+    throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+  }
+
+  const response = await fetch(
+    `${API_URL}/payments/orders/${orderId}/status`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      payload.message || "Gagal memeriksa status pembayaran.",
+    );
+  }
+
+  return payload;
+}
+
+export type ApiMyOrder = {
+  id: string;
+  order_id: number;
+  event_name: string;
+  poster_url: string | null;
+  date: string;
+  quantity: number;
+  total: number;
+  status: "paid" | "pending" | "cancelled" | "refunded";
+  method: string;
+  payment_status: string;
+};
+
+export async function fetchMyOrders(): Promise<ApiMyOrder[]> {
+  const token = localStorage.getItem("token");
+
+  if (!token) {
+    throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
+  }
+
+  const response = await fetch(`${API_URL}/orders/my-orders`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  const result = await response.json();
+
+  if (!response.ok || !result.success) {
+    throw new Error(result.message || "Gagal mengambil data pesanan.");
+  }
+
+  return result.data;
+}
+

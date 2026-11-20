@@ -1,21 +1,30 @@
+
 const express = require("express");
 const router = express.Router();
 
-const authenticateToken = require("../middlewares/authMiddleware");
+const authMiddleware = require("../middlewares/authMiddleware");
 
-const {
-  getNotifications,
-  markNotificationRead,
-  markAllNotificationsRead,
-} = require("../controllers/notificationsController");
+const notificationsController = require("../controllers/notificationsController");
 
-// GET: Mengambil notifikasi user
-router.get("/", authenticateToken, getNotifications);
+// GET all notifications
+router.get(
+  "/",
+  authMiddleware,
+  notificationsController.getNotifications
+);
 
-// PATCH: Tandai semua notifikasi sudah dibaca
-router.patch("/read-all", authenticateToken, markAllNotificationsRead);
+// MARK ALL AS READ
+router.patch(
+  "/read-all",
+  authMiddleware,
+  notificationsController.markAllNotificationsRead
+);
 
-// PATCH: Tandai satu notifikasi sudah dibaca
-router.patch("/:id/read", authenticateToken, markNotificationRead);
+// MARK SINGLE NOTIFICATION AS READ
+router.patch(
+  "/:id/read",
+  authMiddleware,
+  notificationsController.markNotificationRead
+);
 
 module.exports = router;
