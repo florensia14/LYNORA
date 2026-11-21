@@ -94,7 +94,7 @@ export default function LoginPage() {
         role === "organizer"
           ? "/organizer/dashboard"
           : role === "super_admin"
-            ? "/dashboard/admin"
+            ? "/admin/dashboard"
             : "/customer/home";
 
       setTimeout(() => {

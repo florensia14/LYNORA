@@ -1,204 +1,253 @@
 
 const db = require("../config/database");
 
+// ======================================================
+// HELPER
+// ======================================================
+
+const isValidId = (value) => {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0;
+};
+
+const getOrganizerEvent = async (eventId, organizerId) => {
+  const [events] = await db.execute(
+    `SELECT id, status
+     FROM events
+     WHERE id = ? AND organizer_id = ?
+     LIMIT 1`,
+    [eventId, organizerId]
+  );
+
+  return events[0] || null;
+};
+
+// ======================================================
+// CREATE TICKET CATEGORY
 // POST /api/events/:id/tickets
-async function createTicketCategory(req, res) {
+// ======================================================
+
+const createTicketCategory = async (req, res) => {
   try {
-    const { id } = req.params;
+    const eventId = Number(req.params.id);
+    const organizerId = req.user?.id;
+
     const { name, price, quota, benefit } = req.body;
 
-    // Validasi ID konser
-    if (!/^\d+$/.test(id)) {
+    if (!isValidId(eventId)) {
       return res.status(400).json({
-        message: "ID konser tidak valid",
+        message: "Event ID tidak valid",
       });
     }
 
-    // Validasi input
-    if (
-      !name?.trim() ||
-      price === undefined ||
-      quota === undefined
-    ) {
+    if (!organizerId) {
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
+    }
+
+    if (!name || !String(name).trim()) {
       return res.status(400).json({
-        message: "Nama, harga, dan kuota tiket wajib diisi",
+        message: "Nama kategori tiket wajib diisi",
       });
     }
 
     const ticketPrice = Number(price);
     const ticketQuota = Number(quota);
 
-    if (
-      !Number.isFinite(ticketPrice) ||
-      ticketPrice < 0 ||
-      !Number.isInteger(ticketQuota) ||
-      ticketQuota <= 0
-    ) {
+    if (!Number.isFinite(ticketPrice) || ticketPrice < 0) {
       return res.status(400).json({
-        message: "Harga harus berupa angka minimal 0 dan kuota harus bilangan bulat positif",
+        message: "Harga tiket harus berupa angka minimal 0",
       });
     }
 
-    // Cek kepemilikan dan status konser
-    const [events] = await db.execute(
-      `SELECT id, status
-       FROM events
-       WHERE id = ? AND organizer_id = ?`,
-      [id, req.user.id]
-    );
+    if (!Number.isSafeInteger(ticketQuota) || ticketQuota <= 0) {
+      return res.status(400).json({
+        message: "Kuota tiket harus berupa bilangan bulat lebih dari 0",
+      });
+    }
 
-    if (events.length === 0) {
+    const event = await getOrganizerEvent(eventId, organizerId);
+
+    if (!event) {
       return res.status(404).json({
         message: "Konser tidak ditemukan atau bukan milik kamu",
       });
     }
 
-    if (!["pending", "published"].includes(events[0].status)) {
+    // Kategori hanya dapat ditambahkan pada konser pending atau published.
+    if (!["pending", "published"].includes(event.status)) {
       return res.status(400).json({
-        message: "Kategori tiket hanya dapat ditambahkan pada konser pending atau published",
+        message: "Kategori tiket tidak dapat ditambahkan pada status konser ini",
       });
     }
 
-    // Simpan kategori tiket
     const [result] = await db.execute(
       `INSERT INTO ticket_categories
-       (event_id, name, price, quota, benefit)
+        (event_id, name, price, quota, benefit)
        VALUES (?, ?, ?, ?, ?)`,
       [
-        id,
-        name.trim(),
+        eventId,
+        String(name).trim(),
         ticketPrice,
         ticketQuota,
-        benefit?.trim() || null,
+        benefit ? String(benefit).trim() : null,
       ]
+    );
+
+    const [categories] = await db.execute(
+      `SELECT
+         id,
+         event_id,
+         name,
+         price,
+         quota,
+         benefit,
+         created_at,
+         updated_at
+       FROM ticket_categories
+       WHERE id = ?
+       LIMIT 1`,
+      [result.insertId]
     );
 
     return res.status(201).json({
       message: "Kategori tiket berhasil ditambahkan",
-      ticket_category: {
-        id: result.insertId,
-        event_id: Number(id),
-        name: name.trim(),
-        price: ticketPrice,
-        quota: ticketQuota,
-        benefit: benefit?.trim() || null,
-      },
+      ticket_category: categories[0],
     });
   } catch (error) {
-    console.error("Create ticket category error:", error.message);
+    console.error("Create Ticket Category Error:", error);
 
     return res.status(500).json({
       message: "Gagal menambahkan kategori tiket",
     });
   }
-}
+};
 
+// ======================================================
+// GET TICKET CATEGORIES
 // GET /api/events/:id/tickets
-async function getTicketCategories(req, res) {
-  try {
-    const { id } = req.params;
+// ======================================================
 
-    if (!/^\d+$/.test(id)) {
+const getTicketCategories = async (req, res) => {
+  try {
+    const eventId = Number(req.params.id);
+    const organizerId = req.user?.id;
+
+    if (!isValidId(eventId)) {
       return res.status(400).json({
-        message: "ID konser tidak valid",
+        message: "Event ID tidak valid",
       });
     }
 
-    // Pastikan konser milik EO yang sedang login
-    const [events] = await db.execute(
-      `SELECT id
-       FROM events
-       WHERE id = ? AND organizer_id = ?`,
-      [id, req.user.id]
-    );
+    if (!organizerId) {
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
+    }
 
-    if (events.length === 0) {
+    const event = await getOrganizerEvent(eventId, organizerId);
+
+    if (!event) {
       return res.status(404).json({
         message: "Konser tidak ditemukan atau bukan milik kamu",
       });
     }
 
-    // Ambil kategori tiket
-    const [tickets] = await db.execute(
-      `SELECT id, event_id, name, price, quota, benefit,
-              created_at, updated_at
+    const [categories] = await db.execute(
+      `SELECT
+         id,
+         event_id,
+         name,
+         price,
+         quota,
+         benefit,
+         created_at,
+         updated_at
        FROM ticket_categories
        WHERE event_id = ?
        ORDER BY price ASC`,
-      [id]
+      [eventId]
     );
 
-    return res.json({
-      message: "Daftar kategori tiket berhasil diambil",
-      event_id: Number(id),
-      total: tickets.length,
-      ticket_categories: tickets,
+    return res.status(200).json({
+      message: "Berhasil mengambil kategori tiket",
+      event_id: eventId,
+      total: categories.length,
+      ticket_categories: categories,
     });
   } catch (error) {
-    console.error("Get ticket categories error:", error.message);
+    console.error("Get Ticket Categories Error:", error);
 
     return res.status(500).json({
-      message: "Gagal mengambil daftar kategori tiket",
+      message: "Gagal mengambil kategori tiket",
     });
   }
-}
+};
 
-
+// ======================================================
+// UPDATE TICKET CATEGORY
 // PUT /api/events/:id/tickets/:ticketId
-async function updateTicketCategory(req, res) {
+// ======================================================
+
+const updateTicketCategory = async (req, res) => {
   try {
-    const { id, ticketId } = req.params;
+    const eventId = Number(req.params.id);
+    const ticketId = Number(req.params.ticketId);
+    const organizerId = req.user?.id;
+
     const { name, price, quota, benefit } = req.body;
 
-    if (!/^\d+$/.test(id) || !/^\d+$/.test(ticketId)) {
+    if (!isValidId(eventId) || !isValidId(ticketId)) {
       return res.status(400).json({
-        message: "ID konser atau kategori tiket tidak valid",
+        message: "Event ID atau Ticket ID tidak valid",
       });
     }
 
-    if (!name?.trim() || price === undefined || quota === undefined) {
+    if (!organizerId) {
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
+    }
+
+    if (!name || !String(name).trim()) {
       return res.status(400).json({
-        message: "Nama, harga, dan kuota tiket wajib diisi",
+        message: "Nama kategori tiket wajib diisi",
       });
     }
 
     const ticketPrice = Number(price);
     const ticketQuota = Number(quota);
 
-    if (
-      !Number.isFinite(ticketPrice) ||
-      ticketPrice < 0 ||
-      !Number.isInteger(ticketQuota) ||
-      ticketQuota <= 0
-    ) {
+    if (!Number.isFinite(ticketPrice) || ticketPrice < 0) {
       return res.status(400).json({
-        message: "Harga harus berupa angka minimal 0 dan kuota harus bilangan bulat positif",
+        message: "Harga tiket harus berupa angka minimal 0",
       });
     }
 
-    // Pastikan konser milik EO yang sedang login
-    const [events] = await db.execute(
-      `SELECT id
-       FROM events
-       WHERE id = ? AND organizer_id = ?`,
-      [id, req.user.id]
-    );
+    if (!Number.isSafeInteger(ticketQuota) || ticketQuota <= 0) {
+      return res.status(400).json({
+        message: "Kuota tiket harus berupa bilangan bulat lebih dari 0",
+      });
+    }
 
-    if (events.length === 0) {
+    const event = await getOrganizerEvent(eventId, organizerId);
+
+    if (!event) {
       return res.status(404).json({
         message: "Konser tidak ditemukan atau bukan milik kamu",
       });
     }
 
-    // Pastikan kategori tiket berasal dari konser tersebut
-    const [tickets] = await db.execute(
+    const [categories] = await db.execute(
       `SELECT id
        FROM ticket_categories
-       WHERE id = ? AND event_id = ?`,
-      [ticketId, id]
+       WHERE id = ? AND event_id = ?
+       LIMIT 1`,
+      [ticketId, eventId]
     );
 
-    if (tickets.length === 0) {
+    if (!categories.length) {
       return res.status(404).json({
         message: "Kategori tiket tidak ditemukan",
       });
@@ -206,65 +255,74 @@ async function updateTicketCategory(req, res) {
 
     await db.execute(
       `UPDATE ticket_categories
-       SET name = ?, price = ?, quota = ?, benefit = ?
+       SET
+         name = ?,
+         price = ?,
+         quota = ?,
+         benefit = ?
        WHERE id = ? AND event_id = ?`,
       [
-        name.trim(),
+        String(name).trim(),
         ticketPrice,
         ticketQuota,
-        benefit?.trim() || null,
+        benefit ? String(benefit).trim() : null,
         ticketId,
-        id,
+        eventId,
       ]
     );
 
-    return res.json({
+    return res.status(200).json({
       message: "Kategori tiket berhasil diperbarui",
     });
   } catch (error) {
-    console.error("Update ticket category error:", error.message);
+    console.error("Update Ticket Category Error:", error);
 
     return res.status(500).json({
       message: "Gagal memperbarui kategori tiket",
     });
   }
-}
+};
 
-
+// ======================================================
+// DELETE TICKET CATEGORY
 // DELETE /api/events/:id/tickets/:ticketId
-async function deleteTicketCategory(req, res) {
-  try {
-    const { id, ticketId } = req.params;
+// ======================================================
 
-    if (!/^\d+$/.test(id) || !/^\d+$/.test(ticketId)) {
+const deleteTicketCategory = async (req, res) => {
+  try {
+    const eventId = Number(req.params.id);
+    const ticketId = Number(req.params.ticketId);
+    const organizerId = req.user?.id;
+
+    if (!isValidId(eventId) || !isValidId(ticketId)) {
       return res.status(400).json({
-        message: "ID konser atau kategori tiket tidak valid",
+        message: "Event ID atau Ticket ID tidak valid",
       });
     }
 
-    // Pastikan konser milik EO yang sedang login
-    const [events] = await db.execute(
-      `SELECT id
-       FROM events
-       WHERE id = ? AND organizer_id = ?`,
-      [id, req.user.id]
-    );
+    if (!organizerId) {
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
+    }
 
-    if (events.length === 0) {
+    const event = await getOrganizerEvent(eventId, organizerId);
+
+    if (!event) {
       return res.status(404).json({
         message: "Konser tidak ditemukan atau bukan milik kamu",
       });
     }
 
-    // Pastikan kategori tiket berasal dari konser tersebut
-    const [tickets] = await db.execute(
+    const [categories] = await db.execute(
       `SELECT id
        FROM ticket_categories
-       WHERE id = ? AND event_id = ?`,
-      [ticketId, id]
+       WHERE id = ? AND event_id = ?
+       LIMIT 1`,
+      [ticketId, eventId]
     );
 
-    if (tickets.length === 0) {
+    if (!categories.length) {
       return res.status(404).json({
         message: "Kategori tiket tidak ditemukan",
       });
@@ -273,20 +331,24 @@ async function deleteTicketCategory(req, res) {
     await db.execute(
       `DELETE FROM ticket_categories
        WHERE id = ? AND event_id = ?`,
-      [ticketId, id]
+      [ticketId, eventId]
     );
 
-    return res.json({
+    return res.status(200).json({
       message: "Kategori tiket berhasil dihapus",
     });
   } catch (error) {
-    console.error("Delete ticket category error:", error.message);
+    console.error("Delete Ticket Category Error:", error);
 
     return res.status(500).json({
       message: "Gagal menghapus kategori tiket",
     });
   }
-}
+};
+
+// ======================================================
+// EXPORT
+// ======================================================
 
 module.exports = {
   createTicketCategory,

@@ -344,6 +344,7 @@ async function getEvents(req, res) {
 
       WHERE e.approval_status = 'approved'
         AND e.publication_status = 'published'
+        AND e.deleted_at IS NULL
     `;
 
     const params = [];
@@ -478,7 +479,8 @@ async function getEventById(req, res) {
 
        WHERE e.id = ?
          AND e.approval_status = 'approved'
-         AND e.publication_status = 'published'`,
+         AND e.publication_status = 'published'
+          AND e.deleted_at IS NULL`,
       [id]
     );
 
@@ -544,6 +546,7 @@ async function getMyEvents(req, res) {
          ON v.id = e.venue_id
 
        WHERE e.organizer_id = ?
+         AND e.deleted_at IS NULL
 
        ORDER BY e.created_at DESC`,
       [req.user.id]
@@ -835,7 +838,10 @@ async function updateEvent(req, res) {
         id,
         status,
         approval_status,
-        poster_url
+        publication_status,
+        poster_url,
+        sales_start_at,
+        sales_end_at
        FROM events
        WHERE id = ?
          AND organizer_id = ?
@@ -857,10 +863,11 @@ async function updateEvent(req, res) {
     const currentApproval =
       events[0].approval_status || events[0].status;
 
+    const wasApproved = currentApproval === "approved";
+
     if (
-      !["pending", "rejected", "revision_required"].includes(
-        currentApproval
-      )
+      !wasApproved &&
+      !["pending", "rejected", "revision_required"].includes(currentApproval)
     ) {
       await rollbackIfNeeded(connection, transactionStarted);
       transactionStarted = false;
@@ -912,12 +919,12 @@ async function updateEvent(req, res) {
          end_date = ?,
          sales_start_at = ?,
          sales_end_at = ?,
-         status = 'pending',
-         approval_status = 'pending',
-         publication_status = 'draft',
-         rejection_reason = NULL,
-         approved_by = NULL,
-         approved_at = NULL,
+         status = ?,
+         approval_status = ?,
+         publication_status = ?,
+         rejection_reason = CASE WHEN ? = 1 THEN rejection_reason ELSE NULL END,
+         approved_by = CASE WHEN ? = 1 THEN approved_by ELSE NULL END,
+         approved_at = CASE WHEN ? = 1 THEN approved_at ELSE NULL END,
          updated_at = CURRENT_TIMESTAMP
        WHERE id = ?
          AND organizer_id = ?`,
@@ -929,8 +936,14 @@ async function updateEvent(req, res) {
         newPoster,
         start_date,
         end_date,
-        salesWindow.salesStart,
-        salesWindow.salesEnd,
+        salesWindow.salesStart ?? events[0].sales_start_at ?? null,
+        salesWindow.salesEnd ?? events[0].sales_end_at ?? null,
+        wasApproved ? events[0].status : "pending",
+        wasApproved ? "approved" : "pending",
+        wasApproved ? events[0].publication_status : "draft",
+        wasApproved ? 1 : 0,
+        wasApproved ? 1 : 0,
+        wasApproved ? 1 : 0,
         id,
         req.user.id,
       ]
@@ -960,16 +973,16 @@ async function updateEvent(req, res) {
     }
 
     return res.json({
-      message:
-        "Konser berhasil diperbarui dan dikirim ulang untuk persetujuan",
-
+      message: wasApproved
+        ? "Konser berhasil diperbarui"
+        : "Konser berhasil diperbarui dan dikirim ulang untuk persetujuan",
       event_id: Number(id),
       poster_url: newPoster,
-      status: "pending",
-      approval_status: "pending",
-      publication_status: "draft",
-      sales_start_at: salesWindow.salesStart,
-      sales_end_at: salesWindow.salesEnd,
+      status: wasApproved ? events[0].status : "pending",
+      approval_status: wasApproved ? "approved" : "pending",
+      publication_status: wasApproved ? events[0].publication_status : "draft",
+      sales_start_at: salesWindow.salesStart ?? events[0].sales_start_at ?? null,
+      sales_end_at: salesWindow.salesEnd ?? events[0].sales_end_at ?? null,
     });
   } catch (error) {
     await rollbackIfNeeded(connection, transactionStarted);
@@ -1027,41 +1040,25 @@ async function deleteEvent(req, res) {
       });
     }
 
-    const currentApproval =
-      events[0].approval_status || events[0].status;
-
-    if (
-      !["pending", "rejected", "revision_required"].includes(
-        currentApproval
-      )
-    ) {
-      await connection.rollback();
-
-      return res.status(400).json({
-        message:
-          "Konser hanya dapat dihapus jika berstatus pending, rejected, atau revision_required",
-      });
-    }
-
+    // Soft-delete agar riwayat order/tiket tetap utuh, tetapi konser
+    // langsung hilang dari katalog Customer dan daftar Organizer.
     await connection.execute(
-      "DELETE FROM event_artists WHERE event_id = ?",
-      [id]
-    );
-
-    await connection.execute(
-      `DELETE FROM events
+      `UPDATE events
+       SET deleted_at = CURRENT_TIMESTAMP,
+           publication_status = 'unpublished',
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = ?
-         AND organizer_id = ?`,
+         AND organizer_id = ?
+         AND deleted_at IS NULL`,
       [id, req.user.id]
     );
 
     await connection.commit();
 
-    deletePoster(events[0].poster_url);
-
     return res.json({
       message: "Konser berhasil dihapus",
       event_id: Number(id),
+      archived: true,
     });
   } catch (error) {
     if (connection) {
@@ -1430,6 +1427,47 @@ async function publishEvent(req, res) {
 }
 
 // ======================================================
+// ORGANIZER: MOVE EVENT TO DRAFT
+// ======================================================
+
+async function moveEventToDraft(req, res) {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) {
+      return res.status(400).json({ message: "ID konser tidak valid" });
+    }
+
+    const [result] = await db.execute(
+      `UPDATE events
+       SET publication_status = 'unpublished',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND organizer_id = ?
+         AND approval_status = 'approved'
+         AND publication_status = 'published'
+         AND deleted_at IS NULL`,
+      [id, req.user.id]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(409).json({
+        message: "Only published and approved concerts can be moved to Draft.",
+      });
+    }
+
+    return res.json({
+      message: "Concert moved to Draft successfully.",
+      event_id: Number(id),
+      publication_status: "unpublished",
+      display_status: "Draft",
+    });
+  } catch (error) {
+    console.error("Move event to draft error:", error);
+    return res.status(500).json({ message: "Failed to move concert to Draft." });
+  }
+}
+
+// ======================================================
 // ORGANIZER: UNPUBLISH EVENT
 // ======================================================
 
@@ -1620,6 +1658,7 @@ function getDisplayStatus(row) {
 
   if (row.approval_status !== "approved") return "Pending";
 
+  if (row.publication_status === "unpublished") return "Draft";
   if (row.publication_status !== "published") return "Approved";
 
   if (new Date(row.end_date).getTime() < now) return "Completed";
@@ -1668,6 +1707,7 @@ async function fetchConcertRows(organizerId, limit) {
        GROUP BY tc.event_id
      ) s ON s.event_id = e.id
      WHERE e.organizer_id = ?
+       AND e.deleted_at IS NULL
      ORDER BY e.created_at DESC
      LIMIT ${safeLimit}`,
     [organizerId]
@@ -2060,6 +2100,346 @@ async function getOrganizerCreateOptions(req, res) {
 // EXPORT
 // ======================================================
 
+// ======================================================
+// SUPER ADMIN DASHBOARD
+// GET /api/events/admin/dashboard?range=day|week|month|year
+// Memakai helper yang sudah ada di atas: query, PAID_AT, RANGES,
+// buildBuckets, percentChange.
+// ======================================================
+
+// Semua item order yang sudah dibayar (seluruh platform).
+const ADMIN_PAID_FROM = `
+  FROM order_items oi
+  JOIN orders o
+    ON o.id = oi.order_id AND o.status = 'paid'
+  LEFT JOIN payments p
+    ON p.order_id = o.id
+  WHERE 1 = 1`;
+
+
+// Status yang ditampilkan di UI super admin.
+function getAdminDisplayStatus(row) {
+  const now = Date.now();
+
+  if (row.approval_status === "rejected") return "Rejected";
+  if (row.approval_status === "revision_required") return "Revision";
+  if (row.approval_status !== "approved") return "Pending";
+
+  if (row.publication_status !== "published") return "Approved";
+
+  if (new Date(row.end_date).getTime() < now) return "Completed";
+  if (new Date(row.start_date).getTime() <= now) return "Ongoing";
+
+  return "Published";
+}
+
+// Konser terbaru dari semua organizer. Yang butuh tindakan (pending / revisi) ditaruh di atas.
+async function fetchAdminRecentConcerts(limit = 30) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 30, 100));
+
+  const rows = await query(
+    `SELECT
+       e.id,
+       e.name,
+       e.poster_url,
+       e.start_date,
+       e.end_date,
+       e.approval_status,
+       e.publication_status,
+       e.created_at,
+       u.name AS organizer_name,
+       v.name AS venue_name,
+       c.name AS category_name
+     FROM events e
+     JOIN users u ON u.id = e.organizer_id
+     JOIN venues v ON v.id = e.venue_id
+     JOIN categories c ON c.id = e.category_id
+     ORDER BY
+       (e.approval_status IN ('pending', 'revision_required')) DESC,
+       e.created_at DESC
+     LIMIT ${safeLimit}`
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    poster_url: row.poster_url,
+    start_date: row.start_date,
+    end_date: row.end_date,
+    organizer_name: row.organizer_name,
+    venue_name: row.venue_name,
+    category_name: row.category_name,
+    approval_status: row.approval_status,
+    publication_status: row.publication_status,
+    display_status: getAdminDisplayStatus(row),
+    created_at: row.created_at,
+  }));
+}
+
+// Aktivitas terbaru di seluruh platform.
+async function fetchAdminRecentActivity() {
+  const [organizers, submissions, orders, decisions] = await Promise.all([
+    query(
+      `SELECT name, created_at AS at
+       FROM users
+       WHERE role = 'organizer'
+       ORDER BY created_at DESC
+       LIMIT 5`
+    ),
+    query(
+      `SELECT e.name AS event_name, u.name AS organizer_name, e.created_at AS at
+       FROM events e
+       JOIN users u ON u.id = e.organizer_id
+       WHERE e.approval_status IN ('pending', 'revision_required')
+       ORDER BY e.created_at DESC
+       LIMIT 5`
+    ),
+    query(
+      `SELECT
+         o.order_code,
+         ${PAID_AT} AS at,
+         SUM(oi.quantity) AS qty,
+         MIN(e.name) AS event_name
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+       JOIN events e ON e.id = tc.event_id
+       LEFT JOIN payments p ON p.order_id = o.id
+       WHERE o.status = 'paid'
+       GROUP BY o.id, o.order_code, p.settled_at, o.updated_at
+       ORDER BY at DESC
+       LIMIT 5`
+    ),
+    query(
+      `SELECT name AS event_name, approval_status, updated_at AS at
+       FROM events
+       WHERE approval_status IN ('approved', 'rejected')
+       ORDER BY updated_at DESC
+       LIMIT 4`
+    ),
+  ]);
+
+  const items = [
+    ...organizers.map((r) => ({
+      type: "organizer",
+      title: "New organizer registered",
+      description: r.name,
+      at: r.at,
+    })),
+    ...submissions.map((r) => ({
+      type: "submission",
+      title: "Concert submitted for approval",
+      description: `${r.event_name} · ${r.organizer_name}`,
+      at: r.at,
+    })),
+    ...orders.map((r) => ({
+      type: "order",
+      title: "New order",
+      description: `${r.order_code} · ${Number(r.qty)} tickets · ${r.event_name}`,
+      at: r.at,
+    })),
+    ...decisions.map((r) => ({
+      type: r.approval_status === "approved" ? "approved" : "rejected",
+      title:
+        r.approval_status === "approved"
+          ? "Concert approved"
+          : "Concert rejected",
+      description: r.event_name,
+      at: r.at,
+    })),
+  ];
+
+  return items
+    .filter((item) => item.at)
+    .sort((a, b) => new Date(b.at) - new Date(a.at))
+    .slice(0, 8);
+}
+
+// ======================================================
+// GET /api/admin/dashboard?range=day|week|month|year
+// ======================================================
+
+async function getAdminDashboard(req, res) {
+  try {
+    const range = RANGES[req.query.range] ? req.query.range : "week";
+    const buckets = buildBuckets(range);
+    const start = buckets[0].date;
+    const prevStart = new Date(start.getTime() - (Date.now() - start.getTime()));
+    const { unit } = RANGES[range];
+    const dateFormat =
+      unit === "month" ? "%Y-%m" : unit === "day" ? "%Y-%m-%d" : "%Y-%m-%d %H";
+
+    const [
+      userRows,
+      userPeriodRows,
+      eventRows,
+      eventPeriodRows,
+      salesRows,
+      salesPeriodRows,
+      checkInRows,
+      trendRows,
+      concerts,
+      recentActivity,
+    ] = await Promise.all([
+      // Total akun per role
+      query(
+        `SELECT
+           COALESCE(SUM(role = 'customer'), 0) AS customers,
+           COALESCE(SUM(role = 'organizer'), 0) AS organizers,
+           COALESCE(SUM(role = 'customer' AND is_active = 1), 0) AS active_customers
+         FROM users`
+      ),
+
+      // Akun baru: periode ini vs periode sebelumnya
+      query(
+        `SELECT
+           COALESCE(SUM(role = 'customer' AND created_at >= ?), 0) AS cur_customers,
+           COALESCE(SUM(role = 'customer' AND created_at < ?), 0) AS prev_customers,
+           COALESCE(SUM(role = 'organizer' AND created_at >= ?), 0) AS cur_organizers,
+           COALESCE(SUM(role = 'organizer' AND created_at < ?), 0) AS prev_organizers
+         FROM users
+         WHERE created_at >= ?`,
+        [start, start, start, start, prevStart]
+      ),
+
+      // Total konser + yang menunggu persetujuan
+      query(
+        `SELECT
+           COUNT(*) AS total,
+           COALESCE(SUM(approval_status IN ('pending', 'revision_required')), 0) AS pending
+         FROM events`
+      ),
+
+      query(
+        `SELECT
+           COALESCE(SUM(created_at >= ?), 0) AS cur_events,
+           COALESCE(SUM(created_at < ?), 0) AS prev_events
+         FROM events
+         WHERE created_at >= ?`,
+        [start, start, prevStart]
+      ),
+
+      // Tiket terjual & revenue (seluruh platform, order paid)
+      query(
+        `SELECT
+           COALESCE(SUM(oi.quantity), 0) AS tickets_sold,
+           COALESCE(SUM(oi.subtotal), 0) AS revenue
+         ${ADMIN_PAID_FROM}`
+      ),
+
+      query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN ${PAID_AT} >= ? THEN oi.quantity END), 0) AS cur_tickets,
+           COALESCE(SUM(CASE WHEN ${PAID_AT} >= ? THEN oi.subtotal END), 0) AS cur_revenue,
+           COALESCE(SUM(CASE WHEN ${PAID_AT} < ? THEN oi.quantity END), 0) AS prev_tickets,
+           COALESCE(SUM(CASE WHEN ${PAID_AT} < ? THEN oi.subtotal END), 0) AS prev_revenue
+         ${ADMIN_PAID_FROM}
+           AND ${PAID_AT} >= ?`,
+        [start, start, start, start, prevStart]
+      ),
+
+      query(`SELECT COUNT(*) AS total FROM check_ins`),
+
+      // Tren penjualan per bucket
+      query(
+        `SELECT
+           DATE_FORMAT(${PAID_AT}, '${dateFormat}') AS bucket,
+           SUM(oi.quantity) AS tickets,
+           SUM(oi.subtotal) AS revenue
+         ${ADMIN_PAID_FROM}
+           AND ${PAID_AT} >= ?
+         GROUP BY bucket`,
+        [start]
+      ),
+
+      fetchAdminRecentConcerts(30),
+      fetchAdminRecentActivity(),
+    ]);
+
+    const customers = Number(userRows[0].customers);
+    const organizers = Number(userRows[0].organizers);
+    const activeCustomers = Number(userRows[0].active_customers);
+    const userPeriod = userPeriodRows[0];
+    const eventPeriod = eventPeriodRows[0];
+    const salesPeriod = salesPeriodRows[0];
+
+    const ticketsSold = Number(salesRows[0].tickets_sold);
+    const grossRevenue = Number(salesRows[0].revenue);
+    const checkedIn = Number(checkInRows[0].total);
+
+    // Trend: isi bucket kosong dengan 0
+    const trendMap = new Map(
+      trendRows.map((r) => [
+        r.bucket,
+        { tickets: Number(r.tickets), revenue: Number(r.revenue) },
+      ])
+    );
+
+    const trend = buckets.map((b) => ({
+      label: b.label,
+      tickets: trendMap.get(b.key)?.tickets ?? 0,
+      revenue: trendMap.get(b.key)?.revenue ?? 0,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      range,
+      stats: {
+        total_users: customers,
+        active_users: activeCustomers,
+        active_user_percent: customers
+          ? Math.round((activeCustomers / customers) * 1000) / 10
+          : 0,
+        total_organizers: organizers,
+        total_concerts: Number(eventRows[0].total),
+        pending_concerts: Number(eventRows[0].pending),
+        tickets_sold: ticketsSold,
+        gross_revenue: grossRevenue,
+
+        users_change: percentChange(
+          Number(userPeriod.cur_customers),
+          Number(userPeriod.prev_customers)
+        ),
+        organizers_change: percentChange(
+          Number(userPeriod.cur_organizers),
+          Number(userPeriod.prev_organizers)
+        ),
+        concerts_change: percentChange(
+          Number(eventPeriod.cur_events),
+          Number(eventPeriod.prev_events)
+        ),
+        tickets_sold_change: percentChange(
+          Number(salesPeriod.cur_tickets),
+          Number(salesPeriod.prev_tickets)
+        ),
+        revenue_change: percentChange(
+          Number(salesPeriod.cur_revenue),
+          Number(salesPeriod.prev_revenue)
+        ),
+      },
+      trend,
+      attendance: {
+        checked_in: checkedIn,
+        not_checked_in: Math.max(ticketsSold - checkedIn, 0),
+        total: ticketsSold,
+        rate: ticketsSold
+          ? Math.round((checkedIn / ticketsSold) * 1000) / 10
+          : 0,
+      },
+      concerts,
+      recent_activity: recentActivity,
+    });
+  } catch (error) {
+    console.error("Get admin dashboard error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil data dashboard admin",
+    });
+  }
+}
+
+
 module.exports = {
   getEvents,
   getEventById,
@@ -2072,7 +2452,9 @@ module.exports = {
   rejectEvent,
   publishEvent,
   unpublishEvent,
+  moveEventToDraft,
   getOrganizerDashboard,
   getOrganizerConcerts,
   getOrganizerCreateOptions,
+  getAdminDashboard,
 };

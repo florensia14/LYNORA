@@ -22,6 +22,8 @@ type MenuItem = {
   label: string;
   href: string;
   icon: string;
+  // Nama file ikon aktif (tanpa .png) kalau tidak mengikuti pola "<icon> (1).png"
+  activeIcon?: string;
 };
 
 type MenuGroup = {
@@ -37,6 +39,7 @@ const API_ORIGIN = (
 
 const icon = (name: string) => `/icons/${name}.png`;
 const iconActive = (name: string) => `/icons/${name}%20(1).png`;
+const iconFile = (name: string) => `/icons/${encodeURIComponent(name)}.png`;
 
 const menus: Record<Role, MenuGroup[]> = {
   // CUSTOMER MENU
@@ -150,47 +153,45 @@ const menus: Record<Role, MenuGroup[]> = {
       items: [
         {
           label: "Dashboard",
-          href: "/dashboard/admin",
+          href: "/admin/dashboard",
           icon: "home",
         },
-      ],
-    },
-    {
-      title: "Management",
-      items: [
         {
-          label: "User Management",
-          href: "/dashboard/admin/users",
+          label: "Manage Users",
+          href: "/admin/users",
           icon: "user",
         },
         {
-          label: "Event Management",
-          href: "/dashboard/admin/events",
-          icon: "ticket",
+          label: "Manage Concerts",
+          href: "/admin/concerts",
+          icon: "calendar",
         },
         {
-          label: "Category Management",
-          href: "/dashboard/admin/categories",
+          label: "Concert Approvals",
+          href: "/admin/approvals",
           icon: "clipboard",
         },
         {
-          label: "Organizer Management",
-          href: "/dashboard/admin/organizers",
-          icon: "wishlist",
+          label: "Manage Categories",
+          href: "/admin/categories",
+          icon: "category-abu",
+          activeIcon: "category",
         },
         {
-          label: "Transaction Management",
-          href: "/dashboard/admin/transactions",
-          icon: "ticket",
+          label: "Orders & Transactions",
+          href: "/admin/orders",
+          icon: "orders",
+          activeIcon: "orders(1)",
         },
         {
-          label: "Reports",
-          href: "/dashboard/admin/reports",
-          icon: "cari",
+          label: "Reports & Analytics",
+          href: "/admin/reports",
+          icon: "sales",
+          activeIcon: "sales(1)",
         },
         {
           label: "Notifications",
-          href: "/dashboard/admin/notifications",
+          href: "/admin/notifications",
           icon: "notif",
         },
       ],
@@ -200,12 +201,12 @@ const menus: Record<Role, MenuGroup[]> = {
       items: [
         {
           label: "Profile",
-          href: "/dashboard/admin/profile",
+          href: "/admin/profile",
           icon: "user",
         },
         {
           label: "Settings",
-          href: "/dashboard/admin/settings",
+          href: "/admin/settings",
           icon: "setting",
         },
       ],
@@ -222,19 +223,19 @@ const roleLabels: Record<Role, string> = {
 const dashboardHome: Record<Role, string> = {
   customer: "/customer/home",
   organizer: "/organizer/dashboard",
-  super_admin: "/dashboard/admin",
+  super_admin: "/admin/dashboard",
 };
 
 const profileHref: Record<Role, string> = {
   customer: "/customer/profile",
   organizer: "/organizer/profile",
-  super_admin: "/dashboard/admin/profile",
+  super_admin: "/admin/profile",
 };
 
 const settingsHref: Record<Role, string> = {
   customer: "/customer/settings",
   organizer: "/organizer/settings",
-  super_admin: "/dashboard/admin/settings",
+  super_admin: "/admin/settings",
 };
 
 const detailOrigin: Record<string, string> = {
@@ -679,7 +680,9 @@ export default function Sidebar({
                       <img
                         src={
                           selected
-                            ? iconActive(item.icon)
+                            ? item.activeIcon
+                              ? iconFile(item.activeIcon)
+                              : iconActive(item.icon)
                             : icon(item.icon)
                         }
                         alt=""

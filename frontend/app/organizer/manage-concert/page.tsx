@@ -6,6 +6,246 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AddConcertModal from "@/components/organizer/AddConcertModal";
 
+const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api")
+  .replace(/\/api\/?$/, "").replace(/\/$/, "");
+
+const toLocalInput = (value: string) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace(" ", "T").slice(0, 16);
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 16);
+};
+
+const toSqlDateTime = (value: string) => value ? `${value.replace("T", " ")}:00` : "";
+
+type Option = { id: number; name: string };
+type Concert = {
+  id: number; title: string; description: string; poster: string;
+  categoryId: number | string; venueId: number | string;
+  startDate: string; endDate: string; salesStartAt: string; salesEndAt: string;
+  status: string;
+};
+
+function EditConcertModal({
+  concert, onClose, onSaved,
+}: {
+  concert: Concert; onClose: () => void;
+  onSaved: (updated: Record<string, any>) => void;
+}) {
+  const [form, setForm] = useState({
+    name: concert.title || "",
+    description: concert.description || "",
+    category_id: String(concert.categoryId || ""),
+    venue_id: String(concert.venueId || ""),
+    start_date: toLocalInput(concert.startDate),
+    end_date: toLocalInput(concert.endDate),
+    sales_start_at: toLocalInput(concert.salesStartAt),
+    sales_end_at: toLocalInput(concert.salesEndAt),
+  });
+  const [categories, setCategories] = useState<Option[]>([]);
+  const [venues, setVenues] = useState<Option[]>([]);
+  const [poster, setPoster] = useState<File | null>(null);
+  const [preview, setPreview] = useState(concert.poster || "");
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const token = localStorage.getItem("token") || localStorage.getItem("accessToken") || "";
+    fetch(`${API_ORIGIN}/api/events/organizer/create-options`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Failed to load categories and venues.");
+        return res.json();
+      })
+      .then((data) => {
+        if (!active) return;
+        setCategories(data.categories || []);
+        setVenues(data.venues || []);
+      })
+      .catch((err) => active && setError(err.message))
+      .finally(() => active && setLoadingOptions(false));
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!poster) return;
+    const url = URL.createObjectURL(poster);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [poster]);
+
+  function change(field: string, value: string) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function save() {
+    setError("");
+    if (!form.name.trim() || !form.description.trim() || !form.category_id ||
+        !form.venue_id || !form.start_date || !form.end_date) {
+      setError("Please complete all required fields.");
+      return;
+    }
+    if (new Date(form.end_date) <= new Date(form.start_date)) {
+      setError("The end date must be later than the start date.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("token") || localStorage.getItem("accessToken") || "";
+      const body = new FormData();
+      Object.entries(form).forEach(([key, value]) => {
+        const normalized = key.endsWith("_at") || key.endsWith("_date")
+          ? toSqlDateTime(value) : value;
+        body.append(key, normalized);
+      });
+      if (poster) body.append("poster", poster);
+
+      const res = await fetch(`${API_ORIGIN}/api/events/${concert.id}`, {
+        method: "PUT",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body,
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.message || "Failed to update concert.");
+
+      onSaved({
+        id: concert.id,
+        name: form.name,
+        description: form.description,
+        category_id: Number(form.category_id),
+        category_name: categories.find((item) => String(item.id) === form.category_id)?.name || "Other",
+        venue_id: Number(form.venue_id),
+        venue_name: venues.find((item) => String(item.id) === form.venue_id)?.name || "-",
+        start_date: form.start_date,
+        end_date: form.end_date,
+        sales_start_at: form.sales_start_at,
+        sales_end_at: form.sales_end_at,
+        poster_url: result.poster_url || concert.poster,
+        display_status: result.display_status || result.status || "pending",
+        status: result.display_status || result.status || "pending",
+        approval_status: result.approval_status || "pending",
+        publication_status: result.publication_status || "draft",
+      });
+    } catch (err: any) {
+      setError(err.message || "Something went wrong.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputClass = "mt-1.5 w-full rounded-xl border border-white/10 bg-[#10182F] px-3.5 py-2.5 text-sm text-white outline-none transition focus:border-[#7775F0]";
+  const labelClass = "text-[13px] font-semibold text-slate-300";
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/75 px-3 py-4 backdrop-blur-sm [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <section role="dialog" aria-modal="true" aria-labelledby="edit-concert-title"
+        className="my-auto flex max-h-[82vh] w-full max-w-[600px] flex-col overflow-hidden rounded-[18px] border border-white/10 bg-[#19213D] p-4 text-white shadow-2xl sm:p-5">
+        <div className="mb-3 flex shrink-0 items-start justify-between">
+          <div>
+            <p className="text-xs font-bold tracking-[0.2em] text-[#A99AFF]">CONCERT CONFIGURATION</p>
+            <h2 id="edit-concert-title" className="mt-2 text-2xl font-bold">Edit concert</h2>
+            <p className="mt-1 text-sm text-slate-400">Update {concert.title}</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close"
+            className="text-3xl leading-none text-slate-400 hover:text-white">×</button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div>
+            <label className={labelClass}>Concert poster</label>
+            <div className="mt-1 flex items-center gap-3 rounded-xl border border-white/10 bg-[#10182F] p-2">
+              <div className="h-20 w-14 shrink-0 overflow-hidden rounded-lg bg-[#273456]">
+                {preview ? <img src={preview || undefined} alt="Concert poster preview" className="h-full w-full object-cover" /> :
+                  <div className="flex h-full items-center justify-center text-xs text-slate-400">No poster</div>}
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Change poster</p>
+                <p className="mt-1 text-xs text-slate-400">JPG, PNG or WEBP · Maximum 2 MB</p>
+                <label className="mt-2 inline-flex cursor-pointer rounded-lg border border-[#7775F0] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-white/5">
+                  Choose image
+                  <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 2 * 1024 * 1024) { setError("Poster size must not exceed 2 MB."); return; }
+                      setPoster(file); setError("");
+                    }} />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelClass}>Concert name <span className="text-rose-400">*</span></label>
+            <input className={inputClass} value={form.name} onChange={(e) => change("name", e.target.value)} />
+          </div>
+          <div>
+            <label className={labelClass}>Description <span className="text-rose-400">*</span></label>
+            <textarea rows={3} className={inputClass} value={form.description}
+              onChange={(e) => change("description", e.target.value)} />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className={labelClass}>Category <span className="text-rose-400">*</span></label>
+              <select className={inputClass} value={form.category_id} disabled={loadingOptions}
+                onChange={(e) => change("category_id", e.target.value)}>
+                <option value="">Select category</option>
+                {categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Venue <span className="text-rose-400">*</span></label>
+              <select className={inputClass} value={form.venue_id} disabled={loadingOptions}
+                onChange={(e) => change("venue_id", e.target.value)}>
+                <option value="">Select venue</option>
+                {venues.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Start date & time <span className="text-rose-400">*</span></label>
+              <input type="datetime-local" className={inputClass} value={form.start_date}
+                onChange={(e) => change("start_date", e.target.value)} />
+            </div>
+            <div>
+              <label className={labelClass}>End date & time <span className="text-rose-400">*</span></label>
+              <input type="datetime-local" className={inputClass} value={form.end_date}
+                onChange={(e) => change("end_date", e.target.value)} />
+            </div>
+            <div>
+              <label className={labelClass}>Ticket sales start</label>
+              <input type="datetime-local" className={inputClass} value={form.sales_start_at}
+                onChange={(e) => change("sales_start_at", e.target.value)} />
+            </div>
+            <div>
+              <label className={labelClass}>Ticket sales end</label>
+              <input type="datetime-local" className={inputClass} value={form.sales_end_at}
+                onChange={(e) => change("sales_end_at", e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        {error && <p role="alert" className="mt-3 shrink-0 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{error}</p>}
+        <div className="mt-3 flex shrink-0 flex-col-reverse justify-end gap-2 sm:flex-row">
+          <button type="button" onClick={onClose} disabled={saving}
+            className="rounded-xl border border-white/10 px-6 py-3 text-sm font-semibold text-slate-300 hover:bg-white/5">Cancel</button>
+          <button type="button" onClick={save} disabled={saving || loadingOptions}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#5456DE] px-7 py-3 text-sm font-bold text-white hover:bg-[#6264EC] disabled:cursor-not-allowed disabled:opacity-60">
+            <img src="/icons/check (3).png" alt="" className="h-4 w-4 object-contain" />
+            {saving ? "Saving..." : "Save changes"}
+          </button>
+        </div>
+        <p className="mt-2 shrink-0 text-[10px] leading-relaxed text-slate-500">Approved concert changes appear across Organizer, Super Admin, and Customer. Pending or rejected edits are resubmitted for approval.</p>
+      </section>
+    </div>
+  );
+}
+
+
 /* ------------------------------------------------------------------ */
 /* DATA (dummy, replace with your organizer API fetch)                 */
 /* ------------------------------------------------------------------ */
@@ -25,15 +265,11 @@ const STATUSES = ["Published", "Ongoing", "Draft", "Pending", "Rejected", "Compl
 /* API CONFIG  (adjust endpoints & fields to match your backend)       */
 /* ------------------------------------------------------------------ */
 
-const API_ORIGIN = (
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
-)
-  .replace(/\/api\/?$/, "")
-  .replace(/\/$/, "");
-
 const ENDPOINTS = {
   list: `${API_ORIGIN}/api/events/organizer/concerts`, // GET
-  remove: (id) => `${API_ORIGIN}/api/events/${id}`, // DELETE (pending/rejected only)
+  remove: (id) => `${API_ORIGIN}/api/events/${id}`, // DELETE (pending/rejected only),
+  update: (id) => `${API_ORIGIN}/api/events/${id}`,
+  options: `${API_ORIGIN}/api/events/organizer/create-options`,
 };
 
 function authHeaders() {
@@ -84,7 +320,14 @@ function normalizeConcert(raw) {
     id: raw.id,
     code: `CNS-${raw.id}`,
     title: raw.name,
-    poster: toAbsoluteUrl(raw.poster_url),
+    description: raw.description || "",
+    categoryId: raw.category_id || "",
+    venueId: raw.venue_id || "",
+    startDate: raw.start_date || "",
+    endDate: raw.end_date || "",
+    salesStartAt: raw.sales_start_at || "",
+    salesEndAt: raw.sales_end_at || "",
+    poster: toAbsoluteUrl(raw.poster_url) || null,
     date: formatDate(raw.start_date),
     venue: raw.venue_name || "-",
     category: raw.category_name || "Other",
@@ -92,6 +335,8 @@ function normalizeConcert(raw) {
     capacity: Number(raw.quota || 0),
     revenue: Number(raw.revenue || 0), // full rupiah amount
     status: normalizeStatus(raw.display_status || raw.status),
+    approvalStatus: raw.approval_status || "",
+    publicationStatus: raw.publication_status || "",
   };
 }
 
@@ -182,8 +427,10 @@ function FilterSelect({ icon, value, onChange, children, label }) {
   );
 }
 
-function RowMenu({ concert, onDelete }) {
+function RowMenu({ concert, onDelete, onToggleDraft, busy }) {
   const [open, setOpen] = useState(false);
+  const canTogglePublication = concert.approvalStatus === "approved";
+  const isDraft = concert.publicationStatus !== "published";
 
   return (
     <div className="relative">
@@ -208,16 +455,31 @@ function RowMenu({ concert, onDelete }) {
           <div className="absolute right-0 top-9 z-50 w-40 overflow-hidden rounded-xl border border-white/10 bg-[#17213C] p-1.5 shadow-2xl">
             <Link
               href={`/organizer/manage-tickets?concert=${concert.id}`}
+              onClick={() => setOpen(false)}
               className="block rounded-lg px-3 py-2 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white"
             >
               Manage Tickets
             </Link>
             <Link
               href={`/organizer/orders?concert=${concert.id}`}
+              onClick={() => setOpen(false)}
               className="block rounded-lg px-3 py-2 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white"
             >
               View Orders
             </Link>
+            {canTogglePublication && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setOpen(false);
+                  onToggleDraft(concert);
+                }}
+                className="w-full rounded-lg px-3 py-2 text-left text-xs text-amber-300 transition hover:bg-amber-500/10 disabled:opacity-50"
+              >
+                {busy ? "Please wait..." : isDraft ? "Out Draft" : "Draft"}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -235,7 +497,7 @@ function RowMenu({ concert, onDelete }) {
   );
 }
 
-function ConcertRow({ concert, onDelete }) {
+function ConcertRow({ concert, onDelete, onEdit, onToggleDraft, busy }) {
   const percent = concert.capacity
     ? Math.min(100, Math.round((concert.sold / concert.capacity) * 1000) / 10)
     : 0;
@@ -247,7 +509,7 @@ function ConcertRow({ concert, onDelete }) {
         <div className="flex items-center gap-3">
           <div className="h-[60px] w-[50px] shrink-0 overflow-hidden rounded-md bg-[linear-gradient(160deg,#F59E0B_0%,#7C3AED_100%)]">
             <img
-              src={concert.poster}
+              src={concert.poster || undefined}
               alt={concert.title}
               className="h-full w-full object-cover"
               onError={(e) => {
@@ -319,13 +581,14 @@ function ConcertRow({ concert, onDelete }) {
       {/* ACTIONS */}
       <td className="px-4 py-3.5">
         <div className="flex items-center justify-center gap-3 text-white">
-          <Link
-            href={`/organizer/manage-concert/${concert.id}/edit`}
+          <button
+            type="button"
+            onClick={() => onEdit(concert)}
             aria-label={`Edit ${concert.title}`}
-            className="transition hover:text-[#C4B5FD]"
+            className="transition hover:opacity-80"
           >
             <EditIcon className="h-[18px] w-[18px]" />
-          </Link>
+          </button>
           <Link
             href={`/organizer/manage-concert/${concert.id}`}
             aria-label={`View ${concert.title}`}
@@ -333,7 +596,7 @@ function ConcertRow({ concert, onDelete }) {
           >
             <EyeIcon className="h-[18px] w-[18px]" />
           </Link>
-          <RowMenu concert={concert} onDelete={onDelete} />
+          <RowMenu concert={concert} onDelete={onDelete} onToggleDraft={onToggleDraft} busy={busy} />
         </div>
       </td>
     </tr>
@@ -354,8 +617,10 @@ function ManageConcertContent() {
   const [reloadKey, setReloadKey] = useState(0);
   const [toDelete, setToDelete] = useState(null);
   const [showAddConcert, setShowAddConcert] = useState(false);
+  const [editingConcert, setEditingConcert] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [publicationBusyId, setPublicationBusyId] = useState<number | null>(null);
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
   const [sort, setSort] = useState("newest");
@@ -413,6 +678,25 @@ function ManageConcertContent() {
       setDeleteError(err.message || "Something went wrong.");
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function toggleDraft(concert) {
+    setPublicationBusyId(concert.id);
+    try {
+      const isDraft = concert.publicationStatus !== "published";
+      const endpoint = `${API_ORIGIN}/api/events/${concert.id}/${isDraft ? "publish" : "draft"}`;
+      const res = await fetch(endpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.message || "Failed to update publication status.");
+      setReloadKey((key) => key + 1);
+    } catch (err) {
+      window.alert(err.message || "Something went wrong.");
+    } finally {
+      setPublicationBusyId(null);
     }
   }
 
@@ -611,7 +895,14 @@ function ManageConcertContent() {
                 </tr>
               ) : visible.length > 0 ? (
                 visible.map((c) => (
-                  <ConcertRow key={c.id} concert={c} onDelete={setToDelete} />
+                  <ConcertRow
+                    key={c.id}
+                    concert={c}
+                    onDelete={setToDelete}
+                    onEdit={setEditingConcert}
+                    onToggleDraft={toggleDraft}
+                    busy={publicationBusyId === c.id}
+                  />
                 ))
               ) : (
                 <tr>
@@ -654,6 +945,19 @@ function ManageConcertContent() {
           </nav>
         </div>
       </section>
+
+      {editingConcert && (
+        <EditConcertModal
+          concert={editingConcert}
+          onClose={() => setEditingConcert(null)}
+          onSaved={(updated) => {
+            setConcerts((items) => items.map((item) =>
+              item.id === updated.id ? normalizeConcert({ ...item, ...updated }) : item
+            ));
+            setEditingConcert(null);
+          }}
+        />
+      )}
 
       {/* ADD CONCERT MODAL */}
       {showAddConcert && (

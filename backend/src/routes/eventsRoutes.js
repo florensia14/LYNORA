@@ -12,9 +12,11 @@ const {
   rejectEvent,
   publishEvent,
   unpublishEvent,
+  moveEventToDraft,
   getOrganizerDashboard,
   getOrganizerConcerts,
   getOrganizerCreateOptions,
+  getAdminDashboard,
 } = require("../controllers/eventsController");
 
 const {
@@ -81,6 +83,14 @@ router.get(
   getOrganizerCreateOptions
 );
 
+// Super Admin: ringkasan dashboard.
+router.get(
+  "/admin/dashboard",
+  authenticateToken,
+  authorizeRoles("super_admin"),
+  getAdminDashboard
+);
+
 // ======================================================
 // CUSTOMER: DETAIL
 // ======================================================
@@ -123,6 +133,14 @@ router.patch(
   authenticateToken,
   authorizeRoles("organizer"),
   publishEvent
+);
+
+// Pindahkan konser published ke Draft.
+router.patch(
+  "/:id/draft",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  moveEventToDraft
 );
 
 // Batalkan publikasi konser.
