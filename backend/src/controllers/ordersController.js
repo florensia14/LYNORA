@@ -485,12 +485,15 @@ async function getOrganizerSalesDetail(req, res) {
          COALESCE(SUM(CASE WHEN o.status = 'paid' THEN oi.quantity ELSE 0 END), 0) AS tickets_sold,
          COALESCE(SUM(CASE WHEN o.status = 'paid' THEN oi.subtotal ELSE 0 END), 0) AS gross_revenue,
          COUNT(DISTINCT CASE WHEN o.status = 'paid' THEN o.id END) AS paid_orders,
-         COALESCE(SUM(CASE WHEN o.status = 'refunded' OR p.status = 'refunded' THEN oi.subtotal ELSE 0 END), 0) AS refunded_amount,
-         COUNT(DISTINCT CASE WHEN o.status = 'refunded' OR p.status = 'refunded' THEN o.id END) AS refunded_orders
+         COALESCE(SUM(CASE WHEN o.status = 'refunded' OR EXISTS (
+           SELECT 1 FROM payments pr WHERE pr.order_id = o.id AND pr.status = 'refunded'
+         ) THEN oi.subtotal ELSE 0 END), 0) AS refunded_amount,
+         COUNT(DISTINCT CASE WHEN o.status = 'refunded' OR EXISTS (
+           SELECT 1 FROM payments pr WHERE pr.order_id = o.id AND pr.status = 'refunded'
+         ) THEN o.id END) AS refunded_orders
        FROM ticket_categories tc
        LEFT JOIN order_items oi ON oi.ticket_category_id = tc.id
        LEFT JOIN orders o ON o.id = oi.order_id
-       LEFT JOIN payments p ON p.order_id = o.id
        WHERE tc.event_id = ?`,
       [eventId]
     );
@@ -529,7 +532,12 @@ async function getOrganizerSalesDetail(req, res) {
        FROM order_items oi
        JOIN orders o ON o.id = oi.order_id
        JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
-       LEFT JOIN payments p ON p.order_id = o.id
+       LEFT JOIN (
+         SELECT p1.order_id, p1.payment_type
+         FROM payments p1
+         INNER JOIN (SELECT order_id, MAX(id) AS latest_id FROM payments GROUP BY order_id) latest
+           ON latest.latest_id = p1.id
+       ) p ON p.order_id = o.id
        WHERE tc.event_id = ? AND o.status = 'paid'
        GROUP BY p.payment_type
        ORDER BY amount DESC`,
@@ -631,9 +639,328 @@ async function getOrganizerSalesDetail(req, res) {
   }
 }
 
+
+
+// GET /api/orders/admin
+// Super Admin: daftar seluruh order dan ringkasan transaksi.
+const getAdminOrders = async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 8));
+    const offset = (page - 1) * limit;
+    const search = String(req.query.search || "").trim();
+    const status = String(req.query.status || "all").toLowerCase();
+    const paymentStatus = String(req.query.payment_status || "all").toLowerCase();
+    const eventId = String(req.query.event_id || "all");
+    const date = String(req.query.date || "").trim();
+
+    const where = [];
+    const params = [];
+
+    if (search) {
+      where.push(`(
+        o.order_code LIKE ? OR u.name LIKE ? OR u.email LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM payments ps
+          WHERE ps.order_id = o.id AND ps.transaction_id LIKE ?
+        )
+        OR EXISTS (
+          SELECT 1 FROM order_items si
+          JOIN ticket_categories stc ON stc.id = si.ticket_category_id
+          JOIN events se ON se.id = stc.event_id
+          WHERE si.order_id = o.id AND se.name LIKE ?
+        )
+      )`);
+      const like = `%${search}%`;
+      params.push(like, like, like, like, like);
+    }
+
+    if (status === "paid") where.push("LOWER(o.status) = 'paid'");
+    if (status === "pending") where.push("LOWER(o.status) = 'pending'");
+    if (status === "failed") where.push("LOWER(o.status) IN ('failed', 'cancelled', 'expired')");
+    if (status === "refunded") where.push("LOWER(o.status) = 'refunded'");
+
+    if (paymentStatus === "success") where.push(`(
+      SELECT pfs.status FROM payments pfs
+      WHERE pfs.order_id = o.id ORDER BY pfs.id DESC LIMIT 1
+    ) = 'success'`);
+    if (paymentStatus === "pending") where.push(`(
+      SELECT pfp.status FROM payments pfp
+      WHERE pfp.order_id = o.id ORDER BY pfp.id DESC LIMIT 1
+    ) = 'pending'`);
+    if (paymentStatus === "failed") where.push(`(
+      SELECT pff.status FROM payments pff
+      WHERE pff.order_id = o.id ORDER BY pff.id DESC LIMIT 1
+    ) IN ('failed', 'cancelled', 'expire', 'expired')`);
+    if (paymentStatus === "refunded") where.push(`(
+      SELECT pfr.status FROM payments pfr
+      WHERE pfr.order_id = o.id ORDER BY pfr.id DESC LIMIT 1
+    ) = 'refunded'`);
+
+    if (eventId !== "all") {
+      const numericEventId = Number(eventId);
+      if (Number.isSafeInteger(numericEventId) && numericEventId > 0) {
+        where.push(`EXISTS (
+          SELECT 1 FROM order_items ei
+          JOIN ticket_categories etc ON etc.id = ei.ticket_category_id
+          WHERE ei.order_id = o.id AND etc.event_id = ?
+        )`);
+        params.push(numericEventId);
+      }
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      where.push("DATE(o.created_at) = ?");
+      params.push(date);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const [[summary]] = await db.query(`
+      SELECT
+        COUNT(*) AS total_orders,
+        COALESCE(SUM(CASE WHEN LOWER(o.status) = 'paid' THEN o.total_amount ELSE 0 END), 0) AS total_transactions,
+        COALESCE(SUM(CASE WHEN LOWER(o.status) = 'paid' THEN 1 ELSE 0 END), 0) AS successful_payments,
+        COALESCE(SUM(CASE WHEN LOWER(o.status) IN ('pending', 'failed', 'cancelled', 'expired') THEN 1 ELSE 0 END), 0) AS failed_pending
+      FROM orders o
+    `);
+
+    const [[countRow]] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM orders o
+      JOIN users u ON u.id = o.customer_id
+      ${whereSql}
+    `, params);
+
+    const [rows] = await db.query(`
+      SELECT
+        o.id,
+        o.order_code,
+        o.total_amount,
+        o.status AS order_status,
+        o.created_at,
+        u.name AS customer_name,
+        u.email AS customer_email,
+        COALESCE((
+          SELECT GROUP_CONCAT(DISTINCT e.name ORDER BY e.name SEPARATOR ', ')
+          FROM order_items oi
+          JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+          JOIN events e ON e.id = tc.event_id
+          WHERE oi.order_id = o.id
+        ), 'Concert') AS concert_name,
+        (
+          SELECT e.poster_url
+          FROM order_items oi
+          JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+          JOIN events e ON e.id = tc.event_id
+          WHERE oi.order_id = o.id
+          ORDER BY oi.id ASC LIMIT 1
+        ) AS poster_url,
+        (
+          SELECT COALESCE(SUM(oi.quantity), 0)
+          FROM order_items oi WHERE oi.order_id = o.id
+        ) AS quantity,
+        (
+          SELECT p.payment_type FROM payments p
+          WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1
+        ) AS payment_type,
+        (
+          SELECT p.status FROM payments p
+          WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1
+        ) AS payment_status,
+        (
+          SELECT p.transaction_id FROM payments p
+          WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1
+        ) AS transaction_id,
+        (
+          SELECT p.transaction_time FROM payments p
+          WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1
+        ) AS transaction_time
+      FROM orders o
+      JOIN users u ON u.id = o.customer_id
+      ${whereSql}
+      ORDER BY o.created_at DESC, o.id DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    const paymentLabels = {
+      bank_transfer: "Bank Transfer",
+      gopay: "GoPay",
+      qris: "QRIS",
+      credit_card: "Credit Card",
+      shopeepay: "ShopeePay",
+      cstore: "Convenience Store",
+      echannel: "Mandiri Bill",
+      akulaku: "Akulaku",
+    };
+
+    const normalizeOrderStatus = (value) => {
+      const current = String(value || "pending").toLowerCase();
+      if (current === "success") return "paid";
+      if (current === "cancelled" || current === "expired") return "failed";
+      return current;
+    };
+
+    return res.status(200).json({
+      success: true,
+      summary: {
+        total_orders: Number(summary.total_orders || 0),
+        total_transactions: Number(summary.total_transactions || 0),
+        successful_payments: Number(summary.successful_payments || 0),
+        failed_pending: Number(summary.failed_pending || 0),
+      },
+      data: rows.map((row) => ({
+        id: Number(row.id),
+        order_code: row.order_code,
+        customer_name: row.customer_name || "Unknown Customer",
+        customer_email: row.customer_email || "",
+        concert_name: row.concert_name,
+        poster_url: row.poster_url,
+        quantity: Number(row.quantity || 0),
+        total_amount: Number(row.total_amount || 0),
+        order_status: normalizeOrderStatus(row.order_status),
+        payment_status: row.payment_status || "pending",
+        payment_method: paymentLabels[row.payment_type] || row.payment_type || "Not available",
+        transaction_date: row.transaction_time || row.created_at,
+        transaction_id: row.transaction_id || null,
+      })),
+      pagination: {
+        page,
+        limit,
+        total: Number(countRow.total || 0),
+        total_pages: Math.max(1, Math.ceil(Number(countRow.total || 0) / limit)),
+      },
+    });
+  } catch (error) {
+    console.error("Get Admin Orders Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve admin orders.",
+    });
+  }
+};
+
+// GET /api/orders/admin/events
+const getAdminOrderEvents = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT DISTINCT e.id, e.name
+      FROM events e
+      JOIN ticket_categories tc ON tc.event_id = e.id
+      JOIN order_items oi ON oi.ticket_category_id = tc.id
+      ORDER BY e.name ASC
+    `);
+    return res.status(200).json({
+      success: true,
+      data: rows.map((row) => ({ id: Number(row.id), name: row.name })),
+    });
+  } catch (error) {
+    console.error("Get Admin Order Events Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve concerts.",
+    });
+  }
+};
+
+// GET /api/orders/admin/:id
+const getAdminOrderDetail = async (req, res) => {
+  try {
+    const orderId = Number(req.params.id);
+    if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid order ID." });
+    }
+
+    const [rows] = await db.query(`
+      SELECT
+        o.id, o.order_code, o.total_amount, o.status AS order_status, o.created_at,
+        u.name AS customer_name, u.email AS customer_email,
+        (
+          SELECT GROUP_CONCAT(DISTINCT e.name ORDER BY e.name SEPARATOR ', ')
+          FROM order_items oi
+          JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+          JOIN events e ON e.id = tc.event_id
+          WHERE oi.order_id = o.id
+        ) AS concert_name,
+        (
+          SELECT COALESCE(SUM(oi.quantity), 0)
+          FROM order_items oi WHERE oi.order_id = o.id
+        ) AS quantity,
+        (SELECT p.payment_type FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS payment_type,
+        (SELECT p.status FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS payment_status,
+        (SELECT p.transaction_id FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS transaction_id,
+        (SELECT p.transaction_time FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS transaction_time
+      FROM orders o
+      JOIN users u ON u.id = o.customer_id
+      WHERE o.id = ?
+      LIMIT 1
+    `, [orderId]);
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Order not found." });
+    }
+
+    const [items] = await db.query(`
+      SELECT
+        e.name AS concert_name,
+        tc.name AS ticket_category,
+        oi.quantity,
+        oi.price_at_purchase AS price,
+        oi.subtotal
+      FROM order_items oi
+      JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+      JOIN events e ON e.id = tc.event_id
+      WHERE oi.order_id = ?
+      ORDER BY oi.id ASC
+    `, [orderId]);
+
+    const row = rows[0];
+    const paymentLabels = {
+      bank_transfer: "Bank Transfer", gopay: "GoPay", qris: "QRIS",
+      credit_card: "Credit Card", shopeepay: "ShopeePay", cstore: "Convenience Store",
+      echannel: "Mandiri Bill", akulaku: "Akulaku",
+    };
+
+    return res.status(200).json({
+      success: true,
+      order: {
+        id: Number(row.id),
+        order_code: row.order_code,
+        customer_name: row.customer_name,
+        customer_email: row.customer_email,
+        concert_name: row.concert_name,
+        quantity: Number(row.quantity || 0),
+        total_amount: Number(row.total_amount || 0),
+        order_status: String(row.order_status || "pending").toLowerCase(),
+        payment_status: row.payment_status || "pending",
+        payment_method: paymentLabels[row.payment_type] || row.payment_type || "Not available",
+        transaction_date: row.transaction_time || row.created_at,
+        transaction_id: row.transaction_id || null,
+      },
+      items: items.map((item) => ({
+        concert_name: item.concert_name,
+        ticket_category: item.ticket_category,
+        quantity: Number(item.quantity || 0),
+        price: Number(item.price || 0),
+        subtotal: Number(item.subtotal || 0),
+      })),
+    });
+  } catch (error) {
+    console.error("Get Admin Order Detail Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve order detail.",
+    });
+  }
+};
+
+
 module.exports = {
   checkout,
   getMyOrders,
   getOrganizerOrders,
   getOrganizerSalesDetail,
+  getAdminOrders,
+  getAdminOrderEvents,
+  getAdminOrderDetail,
 };

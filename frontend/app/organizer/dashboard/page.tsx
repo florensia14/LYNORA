@@ -903,7 +903,7 @@ export default function OrganizerDashboardPage() {
         <StatCard
           label="Tickets Checked In"
           value={formatNumber(stats.tickets_checked_in)}
-          icon="/icons/qr(1).png"
+          icon="/icons/qr (1).png"
           note={
             <span className="text-[10px] text-slate-400">
               {data.attendance.rate}% of tickets sold

@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+
 import type { ReactNode } from "react";
+
 import Link from "next/link";
+
 import { usePathname, useRouter } from "next/navigation";
+
 import Sidebar from "./Sidebar";
 
 type OrganizerUser = {
@@ -27,8 +31,7 @@ type NotificationItem = {
 const API_ORIGIN = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
 )
-  .replace(/\/api\/?$/, "")
-  .replace(/\/$/, "");
+  .replace(/\/api\/?$/, "").replace(/\/$/, "");
 
 const notificationTabs = [
   { id: "all", label: "All" },
@@ -39,15 +42,11 @@ type NotificationTab = (typeof notificationTabs)[number]["id"];
 
 function getProfilePhoto(user: OrganizerUser | null) {
   if (!user?.profile_photo) return "/icons/user.png";
-
   const photo = user.profile_photo;
-
   if (photo.startsWith("data:")) return photo;
-
   const url = photo.startsWith("http")
     ? photo
     : `${API_ORIGIN}${photo.startsWith("/") ? "" : "/"}${photo}`;
-
   return `${url}${url.includes("?") ? "&" : "?"}v=${user.photo_version || 0}`;
 }
 
@@ -58,10 +57,8 @@ export default function OrganizerShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-
   const [user, setUser] = useState<OrganizerUser | null>(null);
   const [search, setSearch] = useState("");
-
   const [showNotificationsPanel, setShowNotificationsPanel] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [activeNotificationTab, setActiveNotificationTab] =
@@ -70,7 +67,6 @@ export default function OrganizerShell({
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationActionLoading, setNotificationActionLoading] =
     useState(false);
-
   useEffect(() => {
     const readUser = () => {
       try {
@@ -80,28 +76,22 @@ export default function OrganizerShell({
         setUser(null);
       }
     };
-
     readUser();
-
     window.addEventListener("lynora:user-updated", readUser);
     window.addEventListener("storage", readUser);
-
     return () => {
       window.removeEventListener("lynora:user-updated", readUser);
       window.removeEventListener("storage", readUser);
     };
   }, []);
-
   useEffect(() => {
     setSearch("");
     setShowNotificationsPanel(false);
     setShowProfileMenu(false);
   }, [pathname]);
-
   // TODO: sesuaikan endpoint & bentuk response dengan API notifikasi organizer kamu
   useEffect(() => {
     let cancelled = false;
-
     async function loadNotifications() {
       setNotificationsLoading(true);
       try {
@@ -118,26 +108,20 @@ export default function OrganizerShell({
         if (!cancelled) setNotificationsLoading(false);
       }
     }
-
     loadNotifications();
-
     return () => {
       cancelled = true;
     };
   }, []);
-
   const profilePhoto = getProfilePhoto(user);
-
   const unreadCount = useMemo(
     () => notifications.filter((item) => !item.read).length,
     [notifications]
   );
-
   const categoryCounts: Record<NotificationTab, number> = {
     all: notifications.length,
     unread: unreadCount,
   };
-
   const filteredNotifications = useMemo(
     () =>
       activeNotificationTab === "unread"
@@ -145,7 +129,6 @@ export default function OrganizerShell({
         : notifications,
     [notifications, activeNotificationTab]
   );
-
   async function markAllNotificationsRead() {
     if (unreadCount === 0) return;
     setNotificationActionLoading(true);
@@ -156,7 +139,6 @@ export default function OrganizerShell({
       setNotificationActionLoading(false);
     }
   }
-
   function openNotification(item: NotificationItem) {
     setNotifications((items) =>
       items.map((i) => (i.id === item.id ? { ...i, read: true } : i))
@@ -164,7 +146,6 @@ export default function OrganizerShell({
     setShowNotificationsPanel(false);
     router.push(item.href || "/organizer/notifications");
   }
-
   function handleLogout() {
     // TODO: sesuaikan key storage & halaman login dengan project kamu
     localStorage.removeItem("token");
@@ -172,24 +153,21 @@ export default function OrganizerShell({
     setShowProfileMenu(false);
     router.push("/login");
   }
-
   function handleSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     const keyword = search.trim();
     if (!keyword) return;
-
     router.push(
       `/organizer/manage-concert?search=${encodeURIComponent(keyword)}`
     );
   }
-
   return (
     <div className="min-h-screen bg-[#0B1122] text-white">
       <Sidebar fallbackRole="organizer" />
-
       {/* MAIN CONTENT */}
-      <div className="min-h-screen pt-14 lg:pl-[205px] lg:pt-0">
+      <div
+        className="min-h-screen pt-14 transition-[padding] duration-300 lg:pt-0 lg:pl-[var(--organizer-sidebar-width,205px)]"
+      >
         {/* TOPBAR */}
         <header className="sticky top-14 z-30 w-full border-b border-white/[0.07] bg-[linear-gradient(90deg,#0D1328_0%,#162140_25%,#1E2B54_50%,#141C3D_70%,#0B1122_100%)] px-3 py-2.5 backdrop-blur-xl sm:px-5 lg:top-0 lg:px-5 lg:py-2.5 xl:px-6">
           <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2.5 lg:grid-cols-[minmax(130px,1fr)_minmax(180px,340px)_auto] lg:gap-x-3 lg:gap-y-0 xl:grid-cols-[minmax(160px,1fr)_minmax(220px,360px)_auto] xl:gap-x-4">
@@ -202,7 +180,6 @@ export default function OrganizerShell({
                 Kelola konser dan pantau performa event kamu di LYNORA.
               </p>
             </div>
-
             {/* RIGHT ACTIONS */}
             <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3 lg:col-start-3 lg:row-start-1 lg:gap-3 xl:gap-4">
               {/* NOTIFICATION */}
@@ -235,14 +212,12 @@ export default function OrganizerShell({
                     <path d="M10 21h4" />
                     <path d="M12 2v1" />
                   </svg>
-
                   {unreadCount > 0 && (
                     <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#111A34] bg-[#C30437] px-1 text-[10px] font-bold text-white">
                       {unreadCount}
                     </span>
                   )}
                 </button>
-
                 {showNotificationsPanel && (
                   <>
                     <button
@@ -251,13 +226,11 @@ export default function OrganizerShell({
                       onClick={() => setShowNotificationsPanel(false)}
                       className="fixed inset-0 z-40 cursor-default"
                     />
-
                     <section
                       className="absolute right-[-48px] top-[calc(100%+12px)] z-50 w-[min(370px,calc(100vw-20px))] overflow-hidden rounded-xl border border-[#7650C8]/70 bg-[linear-gradient(145deg,#111827_0%,#10182B_55%,#11172A_100%)] shadow-[0_18px_55px_rgba(0,0,0,0.58)] sm:right-[-48px] lg:right-[-42px]"
                       aria-label="Panel notifikasi"
                     >
                       <div className="absolute -top-[7px] right-[60px] h-3.5 w-3.5 rotate-45 border-l border-t border-[#7650C8]/70 bg-[#111827]" />
-
                       <div className="relative flex items-center justify-between gap-3 px-4 pb-3 pt-4">
                         <div>
                           <h2 className="text-base font-bold tracking-tight text-white">
@@ -269,7 +242,6 @@ export default function OrganizerShell({
                               : "All notifications have been read"}
                           </p>
                         </div>
-
                         <button
                           type="button"
                           onClick={markAllNotificationsRead}
@@ -283,7 +255,6 @@ export default function OrganizerShell({
                           <span className="sm:hidden">See all</span>
                         </button>
                       </div>
-
                       <div className="flex gap-1.5 overflow-x-auto px-4 pb-3">
                         {notificationTabs.map((tab) => (
                           <button
@@ -300,7 +271,6 @@ export default function OrganizerShell({
                           </button>
                         ))}
                       </div>
-
                       <div className="max-h-[min(330px,55vh)] overflow-y-auto px-4">
                         {notificationsLoading ? (
                           <div className="border-t border-white/[0.07] py-8 text-center text-[11px] text-slate-400">
@@ -329,7 +299,6 @@ export default function OrganizerShell({
                               >
                                 {item.icon}
                               </span>
-
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-start justify-between gap-2">
                                   <span
@@ -347,7 +316,6 @@ export default function OrganizerShell({
                                   {item.description}
                                 </span>
                               </span>
-
                               {!item.read && (
                                 <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#C084FC] shadow-[0_0_10px_rgba(192,132,252,0.55)]" />
                               )}
@@ -364,7 +332,6 @@ export default function OrganizerShell({
                           </div>
                         )}
                       </div>
-
                       <div className="border-t border-white/[0.08] px-4 py-3 text-center">
                         <Link
                           href="/organizer/notifications"
@@ -379,7 +346,6 @@ export default function OrganizerShell({
                   </>
                 )}
               </div>
-
               {/* PROFILE MENU */}
               <div className="relative shrink-0">
                 <button
@@ -403,7 +369,6 @@ export default function OrganizerShell({
                     }}
                   />
                 </button>
-
                 {showProfileMenu && (
                   <>
                     <button
@@ -412,7 +377,6 @@ export default function OrganizerShell({
                       className="fixed inset-0 z-40 cursor-default"
                       onClick={() => setShowProfileMenu(false)}
                     />
-
                     <div className="absolute right-0 top-12 z-50 w-[min(224px,calc(100vw-24px))] overflow-hidden rounded-xl border border-white/10 bg-[#17213C] p-2 shadow-2xl">
                       <div className="border-b border-white/10 px-3 py-3">
                         <p className="truncate text-sm font-semibold text-white">
@@ -422,7 +386,6 @@ export default function OrganizerShell({
                           {user?.email || ""}
                         </p>
                       </div>
-
                       <Link
                         href="/organizer/profile"
                         onClick={() => setShowProfileMenu(false)}
@@ -430,7 +393,6 @@ export default function OrganizerShell({
                       >
                         My Profile
                       </Link>
-
                       <Link
                         href="/organizer/settings"
                         onClick={() => setShowProfileMenu(false)}
@@ -438,7 +400,6 @@ export default function OrganizerShell({
                       >
                         Settings
                       </Link>
-
                       <button
                         type="button"
                         onClick={handleLogout}
@@ -451,7 +412,6 @@ export default function OrganizerShell({
                 )}
               </div>
             </div>
-
             {/* SEARCH */}
             <form
               onSubmit={handleSearch}
@@ -473,7 +433,6 @@ export default function OrganizerShell({
             </form>
           </div>
         </header>
-
         <main className="min-h-screen px-4 pb-10 pt-5 sm:px-6 lg:px-7 lg:pt-7 xl:px-9">
           {children}
         </main>

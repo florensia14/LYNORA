@@ -1,14 +1,19 @@
-
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+
 import type { ReactNode } from "react";
+
 import Link from "next/link";
+
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+
 import { getCustomerSidebarCollapsed, initializeCustomerSidebarPreference, setCustomerSidebarCollapsed, subscribeCustomerSidebar } from "@/lib/customer-sidebar-state";
 
 type Role = "customer" | "organizer" | "super_admin";
+
 type Lang = "EN" | "ID";
+
 type Theme = "Dark" | "Light";
 
 type SidebarUser = {
@@ -35,11 +40,12 @@ type MenuGroup = {
 const API_ORIGIN = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
 )
-  .replace(/\/api\/?$/, "")
-  .replace(/\/$/, "");
+  .replace(/\/api\/?$/, "").replace(/\/$/, "");
 
 const icon = (name: string) => `/icons/${name}.png`;
+
 const iconActive = (name: string) => `/icons/${name}%20(1).png`;
+
 const iconFile = (name: string) => `/icons/${encodeURIComponent(name)}.png`;
 
 const menus: Record<Role, MenuGroup[]> = {
@@ -77,7 +83,6 @@ const menus: Record<Role, MenuGroup[]> = {
       ],
     },
   ],
-
   // ORGANIZER MENU
   organizer: [
     {
@@ -146,7 +151,6 @@ const menus: Record<Role, MenuGroup[]> = {
       ],
     },
   ],
-
   // SUPER ADMIN MENU
   super_admin: [
     {
@@ -159,7 +163,7 @@ const menus: Record<Role, MenuGroup[]> = {
         },
         {
           label: "Manage Users",
-          href: "/admin/users",
+          href: "/admin/manage-users",
           icon: "user",
         },
         {
@@ -182,13 +186,13 @@ const menus: Record<Role, MenuGroup[]> = {
           label: "Orders & Transactions",
           href: "/admin/orders",
           icon: "orders",
-          activeIcon: "orders(1)",
+          activeIcon: "orders (1)",
         },
         {
           label: "Reports & Analytics",
           href: "/admin/reports",
           icon: "sales",
-          activeIcon: "sales(1)",
+          activeIcon: "sales (1)",
         },
         {
           label: "Notifications",
@@ -258,6 +262,7 @@ const svgProps = {
 };
 
 // USER ICON
+
 const UserIcon = () => (
   <svg {...svgProps}>
     <circle cx="12" cy="8" r="4" />
@@ -266,6 +271,7 @@ const UserIcon = () => (
 );
 
 // SETTINGS ICON
+
 const GearIcon = () => (
   <svg {...svgProps}>
     <circle cx="12" cy="12" r="3" />
@@ -274,6 +280,7 @@ const GearIcon = () => (
 );
 
 // LANGUAGE ICON
+
 const LangIcon = () => (
   <svg {...svgProps}>
     <path d="M4 5h9M8.5 3v2M6 5c.5 4 3 7 6 8M12 5c-.5 4-3 7-7 9" />
@@ -282,6 +289,7 @@ const LangIcon = () => (
 );
 
 // MOON ICON
+
 const MoonIcon = ({ small }: { small?: boolean }) => (
   <svg {...svgProps} {...(small ? { width: 14, height: 14 } : {})}>
     <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
@@ -289,6 +297,7 @@ const MoonIcon = ({ small }: { small?: boolean }) => (
 );
 
 // SUN ICON
+
 const SunIcon = ({ small }: { small?: boolean }) => (
   <svg {...svgProps} {...(small ? { width: 14, height: 14 } : {})}>
     <circle cx="12" cy="12" r="4" />
@@ -297,6 +306,7 @@ const SunIcon = ({ small }: { small?: boolean }) => (
 );
 
 // LOGOUT ICON
+
 const LogoutIcon = () => (
   <svg {...svgProps}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -305,6 +315,7 @@ const LogoutIcon = () => (
 );
 
 // CHEVRON ICON
+
 const Chevron = ({ up }: { up: boolean }) => (
   <svg
     width="16"
@@ -325,6 +336,7 @@ const Chevron = ({ up }: { up: boolean }) => (
 );
 
 // SEGMENTED CONTROL
+
 function Segmented<T extends string>({
   value,
   options,
@@ -342,7 +354,6 @@ function Segmented<T extends string>({
     <div className="flex shrink-0 rounded-lg border border-white/10 bg-black/40 p-0.5">
       {options.map((option) => {
         const selected = option.value === value;
-
         return (
           <button
             key={option.value}
@@ -365,24 +376,24 @@ function Segmented<T extends string>({
 }
 
 // PROFILE PHOTO
+
 function getSidebarProfilePhoto(
   photo?: string | null,
   photoVersion?: number
 ) {
   if (!photo) return "/icons/user.png";
   if (photo.startsWith("data:")) return photo;
-
   const photoBase = photo.startsWith("http")
     ? photo
     : `${API_ORIGIN}${photo.startsWith("/") ? "" : "/"}${photo}`;
-
   return `${photoBase}${photoBase.includes("?") ? "&" : "?"}v=${
     photoVersion || 0
   }`;
 }
 
 // MAIN SIDEBAR
-export default function Sidebar({
+
+function SidebarContent({
   fallbackRole = "customer",
 }: {
   fallbackRole?: Role;
@@ -391,38 +402,46 @@ export default function Sidebar({
   const router = useRouter();
   const searchParams = useSearchParams();
   const from = searchParams.get("from");
-
   const [user, setUser] = useState<SidebarUser | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(getCustomerSidebarCollapsed);
-
   useEffect(() => {
     setCollapsed(initializeCustomerSidebarPreference());
-    return subscribeCustomerSidebar(setCollapsed);
-  }, []);
 
+    const unsubscribe = subscribeCustomerSidebar(setCollapsed);
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--organizer-sidebar-width",
+      collapsed ? "80px" : "240px"
+    );
+    return () => {
+      document.documentElement.style.removeProperty(
+        "--organizer-sidebar-width"
+      );
+    };
+  }, [collapsed]);
   function toggleCollapsed() {
     setCustomerSidebarCollapsed(!collapsed);
   }
   const [popupOpen, setPopupOpen] = useState(false);
   const [lang, setLang] = useState<Lang>("EN");
   const [theme, setTheme] = useState<Theme>("Dark");
-
   const footerRef = useRef<HTMLDivElement>(null);
-
   // READ USER AND SAVED PREFERENCES
   useEffect(() => {
     const readUser = () => {
       try {
         const stored = localStorage.getItem("user");
-
         if (!stored) {
           setUser(null);
           return;
         }
-
         const parsed = JSON.parse(stored);
-
         if (
           ["customer", "organizer", "super_admin"].includes(parsed.role)
         ) {
@@ -435,52 +454,39 @@ export default function Sidebar({
         setUser(null);
       }
     };
-
     readUser();
-
     const savedLang = localStorage.getItem("lang") as Lang | null;
     const savedTheme = localStorage.getItem("theme") as Theme | null;
-
     if (savedLang === "EN" || savedLang === "ID") {
       setLang(savedLang);
     }
-
     if (savedTheme === "Dark" || savedTheme === "Light") {
       setTheme(savedTheme);
     }
-
     window.addEventListener("lynora:user-updated", readUser);
-
     const onStorage = (event: StorageEvent) => {
       if (event.key === "user") readUser();
     };
-
     window.addEventListener("storage", onStorage);
-
     return () => {
       window.removeEventListener("lynora:user-updated", readUser);
       window.removeEventListener("storage", onStorage);
     };
   }, []);
-
   // APPLY THEME
   useEffect(() => {
     const root = document.documentElement;
-
     root.classList.toggle("dark", theme === "Dark");
     root.classList.toggle("light", theme === "Light");
   }, [theme]);
-
   // CLOSE MOBILE MENU AND POPUP ON ROUTE CHANGE
   useEffect(() => {
     setMobileOpen(false);
     setPopupOpen(false);
   }, [pathname]);
-
   // CLOSE POPUP WHEN CLICKING OUTSIDE OR PRESSING ESCAPE
   useEffect(() => {
     if (!popupOpen) return;
-
     const onDown = (event: MouseEvent | TouchEvent) => {
       if (
         footerRef.current &&
@@ -489,36 +495,29 @@ export default function Sidebar({
         setPopupOpen(false);
       }
     };
-
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setPopupOpen(false);
       }
     };
-
     document.addEventListener("mousedown", onDown);
     document.addEventListener("touchstart", onDown);
     document.addEventListener("keydown", onKey);
-
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("touchstart", onDown);
       document.removeEventListener("keydown", onKey);
     };
   }, [popupOpen]);
-
   // LOCK BODY SCROLL WHEN MOBILE MENU IS OPEN
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? "hidden" : "";
-
     return () => {
       document.body.style.overflow = "";
     };
   }, [mobileOpen]);
-
   const role: Role = user?.role || fallbackRole;
   const menuGroups = menus[role];
-
   // ACTIVE MENU
   const isActive = useCallback(
     (href: string) => {
@@ -528,7 +527,6 @@ export default function Sidebar({
       ) {
         return detailOrigin[from || ""] === href;
       }
-
       return (
         pathname === href ||
         (href !== dashboardHome[role] &&
@@ -537,46 +535,36 @@ export default function Sidebar({
     },
     [pathname, role, from]
   );
-
   // CHANGE LANGUAGE
   function chooseLang(value: Lang) {
     setLang(value);
     localStorage.setItem("lang", value);
-
     window.dispatchEvent(
       new CustomEvent("lynora:lang", {
         detail: value,
       })
     );
   }
-
   // CHANGE THEME
   function chooseTheme(value: Theme) {
     setTheme(value);
     localStorage.setItem("theme", value);
   }
-
   // LOGOUT
   function handleLogout() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-
     window.dispatchEvent(new Event("lynora:user-updated"));
-
     router.replace("/login");
   }
-
   const profilePhoto = getSidebarProfilePhoto(
     user?.profile_photo,
     user?.photo_version
   );
-
   const row =
     "group flex w-full min-w-0 items-center gap-2.5 rounded-xl p-1.5 text-left text-[13px] font-medium text-[#d6d3d1] transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6]";
-
   const tile =
     "grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[0.06] text-[#a8a29e] transition-colors group-hover:bg-[#8B5CF6]/20 group-hover:text-[#c4b5fd]";
-
   return (
     <>
       {/* MOBILE TOP BAR */}
@@ -587,7 +575,6 @@ export default function Sidebar({
         >
           LYNORA
         </Link>
-
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -608,7 +595,6 @@ export default function Sidebar({
           </svg>
         </button>
       </header>
-
       {/* MOBILE OVERLAY */}
       <button
         type="button"
@@ -620,11 +606,10 @@ export default function Sidebar({
             : "pointer-events-none opacity-0"
         }`}
       />
-
       {/* SIDEBAR */}
       <aside
         className={`fixed inset-y-0 left-0 z-[70] flex w-[min(280px,85vw)] flex-col border-r border-[#8B5CF6]/70 bg-[#0B1122] text-[#f8f9ff] shadow-2xl transition-[width,transform] duration-300 ease-out lg:z-40 lg:translate-x-0 lg:shadow-none ${
-          collapsed ? "lg:w-[72px]" : "lg:w-[205px]"
+          collapsed ? "lg:w-[80px]" : "lg:w-[240px]"
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         {/* SIDEBAR HEADER */}
@@ -635,7 +620,6 @@ export default function Sidebar({
           >
             LYNORA
           </Link>
-
           <button
             type="button"
             onClick={() => setMobileOpen(false)}
@@ -654,7 +638,6 @@ export default function Sidebar({
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
           </button>
-
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -665,7 +648,6 @@ export default function Sidebar({
             <img src="/icons/grid.png" alt="" className="h-[23px] w-[23px] object-contain" />
           </button>
         </div>
-
         {/* NAVIGATION */}
         <nav className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${collapsed ? "px-2 py-4 lg:px-2" : "px-3 py-4"}`}>
           {menuGroups.map((group) => (
@@ -673,11 +655,9 @@ export default function Sidebar({
               <h3 className={`mb-3 mt-2 px-1 text-[12px] font-bold text-[#727b96] ${collapsed ? "lg:hidden" : ""}`}>
                 {group.title}
               </h3>
-
               <div className="grid gap-1.5">
                 {group.items.map((item) => {
                   const selected = isActive(item.href);
-
                   return (
                     <Link
                       key={item.href}
@@ -704,8 +684,18 @@ export default function Sidebar({
                         alt=""
                         className="h-6 w-6 shrink-0 object-contain"
                       />
-
-                      <span className={`truncate ${collapsed ? "lg:hidden" : ""}`}>{item.label}</span>
+                      <span
+                        className={`truncate ${
+                          collapsed ? "lg:hidden" : ""
+                        } ${
+                          role === "super_admin" &&
+                          item.label === "Orders & Transactions"
+                            ? "text-[12px] tracking-tight"
+                            : ""
+                        }`}
+                      >
+                        {item.label}
+                      </span>
                     </Link>
                   );
                 })}
@@ -713,7 +703,6 @@ export default function Sidebar({
             </div>
           ))}
         </nav>
-
         {/* FOOTER + PROFILE SETTINGS */}
         <div
           ref={footerRef}
@@ -726,7 +715,6 @@ export default function Sidebar({
               className="absolute bottom-full left-2 z-10 mb-2 w-[min(260px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-[#8B5CF6]/25 bg-[#141312] shadow-[0_16px_48px_rgba(0,0,0,0.65)]"
             >
               <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#8B5CF6] to-transparent" />
-
               <div className="relative max-h-[70vh] overflow-y-auto p-2">
                 {/* USER INFO */}
                 <div className="flex items-center gap-2.5 px-1.5 pb-2.5 pt-1.5">
@@ -740,20 +728,16 @@ export default function Sidebar({
                       event.currentTarget.src = "/icons/user.png";
                     }}
                   />
-
                   <div className="min-w-0">
                     <p className="truncate text-[13px] font-bold text-white">
                       {user?.name || "LYNORA User"}
                     </p>
-
                     <span className="mt-0.5 inline-block rounded-full bg-[#ff174f]/10 px-2 py-px text-[10px] font-semibold text-[#ff4d79]">
                       {roleLabels[role]}
                     </span>
                   </div>
                 </div>
-
                 <div className="mx-1 mb-1.5 h-px bg-white/10" />
-
                 {/* PROFILE */}
                 <Link
                   href={profileHref[role]}
@@ -766,7 +750,6 @@ export default function Sidebar({
                   </span>
                   Profile
                 </Link>
-
                 {/* SETTINGS */}
                 <Link
                   href={settingsHref[role]}
@@ -779,7 +762,6 @@ export default function Sidebar({
                   </span>
                   Settings
                 </Link>
-
                 {/* LANGUAGE */}
                 <div
                   role="group"
@@ -789,9 +771,7 @@ export default function Sidebar({
                   <span className={tile}>
                     <LangIcon />
                   </span>
-
                   <span className="flex-1">Language</span>
-
                   <Segmented<Lang>
                     value={lang}
                     onChange={chooseLang}
@@ -809,7 +789,6 @@ export default function Sidebar({
                     ]}
                   />
                 </div>
-
                 {/* THEME */}
                 <div
                   role="group"
@@ -819,9 +798,7 @@ export default function Sidebar({
                   <span className={tile}>
                     {theme === "Dark" ? <MoonIcon /> : <SunIcon />}
                   </span>
-
                   <span className="flex-1">Theme</span>
-
                   <Segmented<Theme>
                     value={theme}
                     onChange={chooseTheme}
@@ -839,9 +816,7 @@ export default function Sidebar({
                     ]}
                   />
                 </div>
-
                 <div className="mx-1 my-1.5 h-px bg-white/10" />
-
                 {/* LOGOUT */}
                 <button
                   type="button"
@@ -855,7 +830,6 @@ export default function Sidebar({
               </div>
             </div>
           )}
-
           {/* PROFILE BUTTON */}
           <button
             type="button"
@@ -874,24 +848,19 @@ export default function Sidebar({
                 event.currentTarget.src = "/icons/user.png";
               }}
             />
-
             <div className={`min-w-0 flex-1 ${collapsed ? "lg:hidden" : ""}`}>
               <strong className="block truncate text-[12px] font-bold text-[#f8f9ff]">
                 {user?.name || "LYNORA User"}
               </strong>
-
               <span className="mt-0.5 block text-[11px] text-[#ff174f]">
                 {roleLabels[role]}
               </span>
             </div>
-
             <span className={`shrink-0 text-[#6b7280] ${collapsed ? "lg:hidden" : ""}`}>
               <Chevron up={popupOpen} />
             </span>
           </button>
-
           <div className="h-px bg-[#41445b]" />
-
           {/* BRAND FOOTER */}
           <div className={`bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text pb-2 pt-1.5 text-center text-[20px] font-medium leading-tight tracking-[3px] text-transparent ${collapsed ? "lg:hidden" : ""}`}>
             LYNORA
@@ -899,5 +868,17 @@ export default function Sidebar({
         </div>
       </aside>
     </>
+  );
+}
+
+export default function Sidebar({
+  fallbackRole = "customer",
+}: {
+  fallbackRole?: Role;
+}) {
+  return (
+    <Suspense fallback={null}>
+      <SidebarContent fallbackRole={fallbackRole} />
+    </Suspense>
   );
 }

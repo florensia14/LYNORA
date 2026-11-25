@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import OrganizerPageHero from "@/components/layout/OrganizerPageHero";
 import { API_URL } from "@/lib/customer";
@@ -139,7 +139,7 @@ function StatusBadge({ value }: { value: string }) {
   );
 }
 
-export default function OrganizerOrdersPage() {
+function OrganizerOrdersContent() {
   const searchParams = useSearchParams();
   const concertId = searchParams.get("concert") || "";
   const [orders, setOrders] = useState<Order[]>([]);
@@ -227,7 +227,7 @@ export default function OrganizerOrdersPage() {
       )}
 
       <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
-        <StatCard label="Total Orders" value={numberLabel(orders.length)} icon="/icons/orders(1).png" tone="blue" helper="All recorded transactions" />
+        <StatCard label="Total Orders" value={numberLabel(orders.length)} icon="/icons/orders (1).png" tone="blue" helper="All recorded transactions" />
         <StatCard label="Paid Orders" value={numberLabel(paidOrders.length)} icon="/icons/check (1).png" tone="cyan" helper="Successfully paid orders" />
         <StatCard label="Pending Payment" value={numberLabel(pendingOrders.length)} icon="/icons/clock.png" tone="yellow" helper="Waiting for payment" />
         <StatCard label="Total Revenue" value={money(revenue)} icon="/icons/dollar.png" tone="purple" helper="From paid orders only" />
@@ -424,5 +424,13 @@ export default function OrganizerOrdersPage() {
         <span className="text-slate-500">Revenue is calculated from paid orders only.</span>
       </div>
     </main>
+  );
+}
+
+export default function OrganizerOrdersPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen w-full bg-[#0B1122]" />}>
+      <OrganizerOrdersContent />
+    </Suspense>
   );
 }

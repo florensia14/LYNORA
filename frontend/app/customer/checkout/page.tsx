@@ -1,11 +1,15 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import CustomerShell from "@/components/layout/CustomerShell";
-import {fetchConcertById, createCheckoutOrder, createOrderPayment,checkPaymentStatus,} from "@/lib/api";
+import {
+  fetchConcertById,
+  createCheckoutOrder,
+  createOrderPayment,
+  checkPaymentStatus,
+} from "@/lib/api";
 import type { Concert } from "@/lib/customer";
-
 declare global {
   interface Window {
     snap?: {
@@ -21,7 +25,6 @@ declare global {
     };
   }
 }
-
 type TicketCategory = {
   id: number;
   name: string;
@@ -29,11 +32,9 @@ type TicketCategory = {
   benefit?: string;
   remaining?: number;
 };
-
 type CheckoutConcert = Concert & {
   ticket_categories?: TicketCategory[];
 };
-
 const MIDTRANS_CLIENT_KEY =
   process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || "";
 const MIDTRANS_IS_PRODUCTION =
@@ -45,7 +46,6 @@ function money(value: number) {
     maximumFractionDigits: 0,
   }).format(value);
 }
-
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
@@ -56,10 +56,8 @@ function formatDate(value: string) {
     minute: "2-digit",
     timeZone: "Asia/Jakarta",
   }).format(new Date(value)) + " WIB";
-
 }
-
-export default function CheckoutPage() {
+function CheckoutContent() {
   const router = useRouter();
   const params = useSearchParams();
   const eventId = Number(params.get("eventId"));
@@ -71,13 +69,11 @@ export default function CheckoutPage() {
       ? Math.min(10, Math.max(1, initialQuantity))
       : 1,
   );
-
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const [orderId, setOrderId] = useState<number | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
-
   const [attendees, setAttendees] = useState<
     { full_name: string; email: string; phone: string }[]
   >(() =>
@@ -87,7 +83,6 @@ export default function CheckoutPage() {
       phone: "",
     })),
   );
-
   useEffect(() => {
     setAttendees((current) =>
       Array.from({ length: quantity }, (_, index) =>
@@ -95,138 +90,75 @@ export default function CheckoutPage() {
       ),
     );
   }, [quantity]);
-
   const [agreed, setAgreed] = useState(false);
-
   useEffect(() => {
-
     let mounted = true;
-
     async function loadCheckout() {
-
       try {
-
         setLoading(true);
-
         setError("");
-
         if (
-
           !Number.isSafeInteger(eventId) ||
-
           eventId <= 0 ||
-
           !Number.isSafeInteger(categoryId) ||
-
           categoryId <= 0
-
         ) {
-
           throw new Error("Data checkout tidak valid. Silakan pilih tiket kembali.");
-
         }
-
         const data = await fetchConcertById(eventId);
-
         if (!mounted) return;
-
         const detail = data as CheckoutConcert;
-
         const category = detail.ticket_categories?.find(
-
           (item) => Number(item.id) === categoryId,
-
         );
-
         if (!category) {
-
           throw new Error(
-
             "Kategori tiket tidak ditemukan. Silakan pilih kategori tiket kembali.",
-
           );
-
         }
-
         if (Number(category.remaining ?? 0) < 1) {
-
           throw new Error("Tiket untuk kategori ini sedang tidak tersedia.");
-
         }
-
         setConcert(detail);
-
       } catch (err) {
-
         if (mounted) {
-
           setError(
-
             err instanceof Error
-
               ? err.message
-
               : "Gagal memuat data checkout.",
-
           );
-
         }
-
       } finally {
-
         if (mounted) setLoading(false);
-
       }
-
     }
-
     loadCheckout();
-
     return () => {
-
       mounted = false;
-
     };
-
   }, [eventId, categoryId]);
-
   const selectedTicket = useMemo(() => {
-
     return concert?.ticket_categories?.find(
-
       (item) => Number(item.id) === categoryId,
-
     );
-
   }, [concert, categoryId]);
-
   const subtotal = Number(selectedTicket?.price || 0) * quantity;
-
   async function handleContinuePayment() {
-
     if (!concert || !selectedTicket || processing) return;
-
     if (!agreed) {
-
       setError("Silakan setujui syarat dan ketentuan terlebih dahulu.");
-
       return;
-
     }
-
     if (attendees.length !== quantity) {
       setError("Jumlah data attendee tidak sesuai dengan jumlah tiket.");
       return;
     }
-
     for (let index = 0; index < attendees.length; index += 1) {
       const attendee = attendees[index];
-
       if (!attendee.full_name.trim()) {
         setError(`Nama lengkap attendee ${index + 1} wajib diisi.`);
         return;
       }
-
       if (
         attendee.email.trim() &&
         !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(attendee.email.trim())
@@ -235,454 +167,233 @@ export default function CheckoutPage() {
         return;
       }
     }
-
     if (!MIDTRANS_CLIENT_KEY) {
-
       setError("Konfigurasi Midtrans Client Key belum tersedia.");
-
       return;
-
     }
-
     try {
-
       setProcessing(true);
-
       setError("");
-
       // 1. Buat order pada backend.
-
         const orderResult = await createCheckoutOrder([
-
             {
-
                 ticket_category_id: categoryId,
-
                 quantity,
                 attendees: attendees.map((attendee) => ({
                   full_name: attendee.full_name.trim(),
                   email: attendee.email.trim() || null,
                   phone: attendee.phone.trim() || null,
                 })),
-
             },
-
         ]);
-
 setOrderId(orderResult.order.id);
-
       // 2. Minta Snap token untuk order tersebut.
-
       const paymentResult = await createOrderPayment(
-
         orderResult.order.id,
-
       );
-
       const snapToken = paymentResult.payment?.snap_token;
-
       if (!snapToken) {
-
         throw new Error("Token pembayaran Midtrans tidak diterima.");
-
       }
-
       // 3. Buka pembayaran Midtrans Snap.
-
       if (!window.snap) {
-
         const script = document.createElement("script");
-
         script.src = MIDTRANS_IS_PRODUCTION
-
-          ? "https\://app.midtrans.com/snap/snap.js"
-
-          : "https\://app.sandbox.midtrans.com/snap/snap.js";
-
+          ? "https://app.midtrans.com/snap/snap.js"
+          : "https://app.sandbox.midtrans.com/snap/snap.js";
         script.setAttribute("data-client-key", MIDTRANS_CLIENT_KEY);
-
         await new Promise<void>((resolve, reject) => {
-
           script.onload = () => resolve();
-
           script.onerror = () =>
-
             reject(new Error("Gagal memuat halaman pembayaran Midtrans."));
-
           document.body.appendChild(script);
-
         });
-
       }
-
       if (!window.snap) {
-
         throw new Error("Midtrans Snap belum siap.");
-
       }
-
       window.snap.pay(snapToken, {
-
   onSuccess: () => {
-
     setProcessing(false);
-
     setError(
-
       "Pembayaran diterima Midtrans. Silakan cek status pembayaran sebelum membuka tiket.",
-
     );
-
   },
-
   onPending: () => {
-
     setProcessing(false);
-
     setError(
-
       "Pembayaran masih menunggu konfirmasi. Silakan cek kembali status pembayaran.",
-
     );
-
   },
-
   onError: () => {
-
     setProcessing(false);
-
     setError(
-
       "Pembayaran belum berhasil. Silakan periksa status pesanan kamu.",
-
     );
-
   },
-
   onClose: () => {
-
     setProcessing(false);
-
   },
-
 });
-
     } catch (err) {
-
       setError(
-
         err instanceof Error
-
           ? err.message
-
           : "Terjadi kesalahan saat memproses checkout.",
-
       );
-
       setProcessing(false);
-
     }
-
   }
-
   async function handleCheckPaymentStatus() {
-
     if (!orderId || checkingStatus) return;
-
     try {
-
       setCheckingStatus(true);
-
       setError("");
-
       const result = await checkPaymentStatus(orderId);
-
       const paymentStatus = String(result.payment_status ?? "").toLowerCase();
-
       const orderStatus = String(result.order_status ?? "").toLowerCase();
-
       if (
-
         ["success", "paid", "settlement"].includes(paymentStatus) ||
-
         ["paid", "completed"].includes(orderStatus)
-
       ) {
-
         router.push("/customer/tickets");
-
         return;
-
       }
-
       if (["expired", "failed", "cancelled", "refunded"].includes(paymentStatus)) {
-
         setError(`Status pembayaran: ${paymentStatus}. Silakan periksa pesanan kamu.`);
-
         return;
-
       }
-
       setError(
-
         `Pembayaran belum dikonfirmasi. Status saat ini: ${paymentStatus || "pending"}. Silakan cek kembali beberapa saat lagi.`,
-
       );
-
     } catch (err) {
-
       setError(
-
         err instanceof Error
-
           ? err.message
-
           : "Gagal memeriksa status pembayaran.",
-
       );
-
     } finally {
-
       setCheckingStatus(false);
-
     }
-
   }
-
   if (loading) {
-
     return (
-
       <CustomerShell
-
         title="Checkout"
-
         subtitle="Prepare your concert experience"
-
       >
-
         <div className="rounded-xl border border-[#676D89] bg-[#161624] p-8 text-center text-sm text-slate-400">
-
           Loading checkout...
-
         </div>
-
       </CustomerShell>
-
     );
-
   }
-
   if (error && !concert) {
-
     return (
-
       <CustomerShell
-
         title="Checkout"
-
         subtitle="Prepare your concert experience"
-
       >
-
         <div className="rounded-xl border border-red-500/30 bg-[#161624] p-6">
-
           <p className="text-sm text-red-300">{error}</p>
-
           <Link
-
             href="/customer/explore"
-
             className="mt-4 inline-block rounded-lg bg-[#5456DE] px-5 py-2 text-sm font-bold text-white"
-
           >
-
             Explore Concerts
-
           </Link>
-
         </div>
-
       </CustomerShell>
-
     );
-
   }
-
   if (!concert || !selectedTicket) return null;
-
   return (
-
     <CustomerShell
-
       title="Checkout"
-
       subtitle="Complete your order and enjoy the concert."
-
     >
-
       <main className="mx-auto w-full min-w-0 max-w-5xl space-y-5">
-
         <Link
-
           href={`/events/${concert.id}`}
-
           className="inline-flex items-center gap-2 text-sm font-semibold text-slate-300 transition hover:text-white"
-
         >
-
           <span className="text-lg">←</span>
-
           Back
-
         </Link>
-
         <div>
-
           <h1 className="text-2xl font-black text-white sm:text-3xl">
-
             Checkout
-
           </h1>
-
           <p className="mt-1 text-xs text-slate-400">
-
             Complete your order and get ready for an unforgettable experience.
-
           </p>
-
         </div>
-
         <div className="flex items-center gap-2 overflow-x-auto rounded-xl border border-[#676D89] bg-[#161624] p-3">
-
           {[
-
             "1  Order Details",
-
             "2  Payment",
-
             "3  E-Ticket",
-
           ].map((step, index) => (
-
             <div
-
               key={step}
-
               className={`flex-1 whitespace-nowrap rounded-lg px-3 py-2 text-center text-[10px] font-bold sm:text-xs ${
-
                 index === 0
-
                   ? "bg-gradient-to-r from-[#6255DF] to-[#8B5CF6] text-white"
-
                   : "bg-[#20203A] text-slate-400"
-
               }`}
-
             >
-
               {step}
-
             </div>
-
           ))}
-
         </div>
-
         <section className="flex flex-col gap-4 rounded-xl border border-[#676D89] bg-[#161624] p-3 sm:flex-row sm:items-center">
-
           <img
-
             src={concert.poster_url || "/images/hero/home.jpg"}
-
             alt={concert.name}
-
             className="h-32 w-full rounded-lg object-cover sm:h-24 sm:w-40"
-
             onError={(event) => {
-
               event.currentTarget.src = "/images/hero/home.jpg";
-
             }}
-
           />
-
           <div className="min-w-0 flex-1">
-
             <span className="rounded bg-[#2F1E2A] px-2 py-1 text-[9px] font-bold uppercase text-[#FF6B81]">
-
               Live event
-
             </span>
-
             <h2 className="mt-2 text-sm font-black text-white sm:text-base">
-
               {concert.name}
-
             </h2>
-
             <p className="mt-2 text-[11px] text-slate-400">
-
               {formatDate(concert.start_date)}
-
             </p>
-
             <p className="mt-1 text-[11px] text-slate-400">
-
               {concert.venue_name || "Venue to be announced"}
-
               {concert.venue_address
-
                 ? ` · ${concert.venue_address}`
-
                 : ""}
-
             </p>
-
           </div>
-
         </section>
-
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
-
           <div className="space-y-4">
-
             <section className="rounded-xl border border-[#676D89] bg-[#161624] p-4">
-
               <h2 className="mb-4 border-l-4 border-[#22D3EE] pl-3 text-sm font-black text-white">
-
                 Ticket Selection
-
               </h2>
-
               <div className="rounded-lg border border-[#676D89] bg-[#20203A] p-3">
-
                 <div className="flex items-start justify-between gap-3">
-
                   <div className="min-w-0">
-
                     <p className="text-xs font-black text-white">
-
                       {selectedTicket.name}
-
                     </p>
-
                     <p className="mt-1 text-[10px] text-slate-400">
-
                       {selectedTicket.benefit ||
-
                         "Enjoy the live concert experience."}
-
                     </p>
-
                   </div>
-
                   <p className="shrink-0 text-sm font-black text-[#B9A7FF]">
-
                     {money(Number(selectedTicket.price))}
                   </p>
                 </div>
-
                 <div className="mt-4 flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold text-white">Quantity</p>
@@ -690,7 +401,6 @@ setOrderId(orderResult.order.id);
                       Maximum 10 tickets per order
                     </p>
                   </div>
-
                   <div className="flex items-center gap-3 rounded-lg border border-[#676D89] bg-[#161624] p-1">
                     <button
                       type="button"
@@ -701,11 +411,9 @@ setOrderId(orderResult.order.id);
                     >
                       −
                     </button>
-
                     <span className="min-w-5 text-center text-xs font-black text-white">
                       {quantity}
                     </span>
-
                     <button
                       type="button"
                       onClick={() =>
@@ -725,7 +433,6 @@ setOrderId(orderResult.order.id);
               <h2 className="mb-4 border-l-4 border-[#22D3EE] pl-3 text-sm font-black text-white">
                 Attendee Information
               </h2>
-
               <div className="space-y-4">
                 {attendees.map((attendee, index) => (
                   <div
@@ -735,7 +442,6 @@ setOrderId(orderResult.order.id);
                     <h3 className="text-xs font-black text-[#22D3EE]">
                       Attendee {index + 1}
                     </h3>
-
                     <div>
                       <label className="mb-1 block text-[11px] font-bold text-slate-300">
                         Full Name <span className="text-red-400">*</span>
@@ -755,7 +461,6 @@ setOrderId(orderResult.order.id);
                         className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
                       />
                     </div>
-
                     <div>
                       <label className="mb-1 block text-[11px] font-bold text-slate-300">
                         Email Address <span className="text-slate-500">(Optional)</span>
@@ -776,7 +481,6 @@ setOrderId(orderResult.order.id);
                         className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
                       />
                     </div>
-
                     <div>
                       <label className="mb-1 block text-[11px] font-bold text-slate-300">
                         Phone Number <span className="text-slate-500">(Optional)</span>
@@ -799,7 +503,6 @@ setOrderId(orderResult.order.id);
                     </div>
                   </div>
                 ))}
-
                 <p className="text-[10px] leading-relaxed text-amber-300/80">
                   Enter the details of each ticket holder. If an email is left
                   blank, the e-ticket will use the email registered on the
@@ -891,5 +594,23 @@ setOrderId(orderResult.order.id);
         </div>
       </main>
     </CustomerShell>
+  );
+}
+export default function CheckoutPage() {
+  return (
+    <Suspense
+      fallback={
+        <CustomerShell
+          title="Checkout"
+          subtitle="Prepare your concert experience"
+        >
+          <div className="rounded-xl border border-[#676D89] bg-[#161624] p-8 text-center text-sm text-slate-400">
+            Loading checkout...
+          </div>
+        </CustomerShell>
+      }
+    >
+      <CheckoutContent />
+    </Suspense>
   );
 }

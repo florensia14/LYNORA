@@ -1,12 +1,10 @@
 "use client";
-
 import { Suspense, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-
+import AdminPageHero from "@/components/layout/AdminPageHero";
 type DashboardRange = "day" | "week" | "month" | "year";
-
 type ConcertRow = {
   id: number;
   name: string;
@@ -20,20 +18,17 @@ type ConcertRow = {
   publication_status: string;
   display_status: string;
 };
-
 type TrendPoint = {
   label: string;
   tickets: number;
   revenue: number;
 };
-
 type ActivityItem = {
   type: "organizer" | "submission" | "order" | "approved" | "rejected";
   title: string;
   description: string;
   at: string;
 };
-
 type DashboardData = {
   range: DashboardRange;
   stats: {
@@ -61,43 +56,40 @@ type DashboardData = {
   concerts: ConcertRow[];
   recent_activity: ActivityItem[];
 };
-
 // ------------------------------------------------------------------
 // Request helpers
 // ------------------------------------------------------------------
-
 const API_ORIGIN = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
 )
   .replace(/\/api\/?$/, "")
   .replace(/\/$/, "");
-
 function toAbsoluteUrl(path?: string | null) {
   if (!path) return "";
-  if (path.startsWith("http") || path.startsWith("data:")) return path;
-  return `${API_ORIGIN}${path.startsWith("/") ? "" : "/"}${path}`;
+  const value = path.trim();
+  if (!value) return "";
+  if (/^(https?:)?\/\//i.test(value) || value.startsWith("data:")) {
+    return value;
+  }
+  // Poster paths may be stored as "/uploads/..." or "uploads/...".
+  return `${API_ORIGIN}${value.startsWith("/") ? "" : "/"}${value}`;
 }
-
 async function request<T>(
   path: string,
   options: { method?: string; body?: unknown; signal?: AbortSignal } = {}
 ): Promise<T> {
   const token =
     typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (options.body) headers["Content-Type"] = "application/json";
-
   const res = await fetch(`${API_ORIGIN}${path}`, {
     method: options.method || "GET",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
     signal: options.signal,
   });
-
   const body = await res.json().catch(() => null);
-
   if (!res.ok) {
     if (res.status === 401) {
       throw new Error("Your session has expired. Please log in again.");
@@ -107,41 +99,32 @@ async function request<T>(
     }
     throw new Error(body?.message || "Request failed.");
   }
-
   return body as T;
 }
-
 const getAdminDashboard = (range: DashboardRange, signal?: AbortSignal) =>
   request<DashboardData>(`/api/events/admin/dashboard?range=${range}`, { signal });
-
 const approveConcert = (id: number) =>
   request(`/api/events/${id}/approve`, { method: "PATCH" });
-
 const rejectConcert = (id: number, reason: string) =>
   request(`/api/events/${id}/reject`, {
     method: "PATCH",
     body: { rejection_reason: reason },
   });
-
 // ------------------------------------------------------------------
 // Formatters
 // ------------------------------------------------------------------
-
 function formatNumber(value: number) {
   return Number(value || 0).toLocaleString("en-US");
 }
-
 // 48,900,000 -> "Rp 48.9M" · 1,250,000,000 -> "Rp 1.25B"
 function formatRupiah(value: number) {
   const n = Number(value || 0);
   const fmt = (x: number, digits: number) =>
     x.toLocaleString("en-US", { maximumFractionDigits: digits });
-
   if (n >= 1_000_000_000) return `Rp ${fmt(n / 1_000_000_000, 2)}B`;
   if (n >= 1_000_000) return `Rp ${fmt(n / 1_000_000, 1)}M`;
   return `Rp ${fmt(n, 0)}`;
 }
-
 function compactNumber(value: number) {
   const n = Number(value || 0);
   if (n >= 1_000_000_000) return `${+(n / 1_000_000_000).toFixed(1)}B`;
@@ -149,7 +132,6 @@ function compactNumber(value: number) {
   if (n >= 1_000) return `${+(n / 1_000).toFixed(1)}K`;
   return String(Math.round(n));
 }
-
 function formatDate(value: string) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "-";
@@ -159,35 +141,27 @@ function formatDate(value: string) {
     year: "numeric",
   });
 }
-
 function timeAgo(value: string) {
   const diff = Date.now() - new Date(value).getTime();
   if (!Number.isFinite(diff)) return "";
-
   const minutes = Math.floor(diff / 60000);
   if (minutes < 1) return "Just now";
   if (minutes < 60) return `${minutes} min ago`;
-
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} hr ago`;
-
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days} ${days === 1 ? "day" : "days"} ago`;
-
   return formatDate(value);
 }
-
 // ------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------
-
 const RANGES: { id: DashboardRange; label: string }[] = [
   { id: "day", label: "Day" },
   { id: "week", label: "Week" },
   { id: "month", label: "Month" },
   { id: "year", label: "Year" },
 ];
-
 const STATUS_STYLE: Record<string, string> = {
   Pending: "bg-[#4A3A17] text-[#FBBF24]",
   Revision: "bg-[#4A2A17] text-[#FB923C]",
@@ -197,7 +171,6 @@ const STATUS_STYLE: Record<string, string> = {
   Rejected: "bg-[#4B1D2B] text-[#FB7185]",
   Completed: "bg-[#27304F] text-slate-300",
 };
-
 const ACTIVITY_STYLE: Record<
   ActivityItem["type"],
   { icon: string; tone: string }
@@ -208,13 +181,10 @@ const ACTIVITY_STYLE: Record<
   approved: { icon: "/icons/check (1).png", tone: "bg-[#063D35]" },
   rejected: { icon: "/icons/warning (1).png", tone: "bg-[#4B1D2B]" },
 };
-
 const PAGE_SIZE = 5;
-
 // ------------------------------------------------------------------
 // Small building blocks
 // ------------------------------------------------------------------
-
 function Card({
   title,
   subtitle,
@@ -247,12 +217,10 @@ function Card({
     </section>
   );
 }
-
 function Change({ value }: { value: number | null }) {
   if (value === null) {
     return <span className="text-[10px] text-slate-500">No comparison yet</span>;
   }
-
   const up = value >= 0;
   return (
     <span
@@ -266,7 +234,6 @@ function Change({ value }: { value: number | null }) {
     </span>
   );
 }
-
 function StatCard({
   label,
   value,
@@ -295,7 +262,6 @@ function StatCard({
     </div>
   );
 }
-
 function SegmentedTabs<T extends string>({
   tabs,
   value,
@@ -333,11 +299,9 @@ function SegmentedTabs<T extends string>({
     </div>
   );
 }
-
 // ------------------------------------------------------------------
 // Charts (pure SVG, no library)
 // ------------------------------------------------------------------
-
 function TrendChart({
   points,
   metric,
@@ -351,7 +315,6 @@ function TrendChart({
   const R = 12;
   const T = 12;
   const B = 26;
-
   const values = points.map((p) =>
     metric === "tickets" ? p.tickets : p.revenue
   );
@@ -359,13 +322,11 @@ function TrendChart({
   const x = (i: number) =>
     L + (points.length <= 1 ? 0 : (i / (points.length - 1)) * (W - L - R));
   const y = (v: number) => T + (1 - v / max) * (H - T - B);
-
   const line = values
     .map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`)
     .join(" ");
   const area = `${line} L${x(values.length - 1).toFixed(1)} ${H - B} L${x(0).toFixed(1)} ${H - B} Z`;
   const step = Math.max(1, Math.ceil(points.length / 6));
-
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
@@ -379,7 +340,6 @@ function TrendChart({
           <stop offset="100%" stopColor="#8B5CF6" stopOpacity="0" />
         </linearGradient>
       </defs>
-
       {[0, 0.25, 0.5, 0.75, 1].map((t) => (
         <g key={t}>
           <line
@@ -400,7 +360,6 @@ function TrendChart({
           </text>
         </g>
       ))}
-
       <path d={area} fill="url(#admin-trend-fill)" />
       <path
         d={line}
@@ -410,7 +369,6 @@ function TrendChart({
         strokeLinejoin="round"
         strokeLinecap="round"
       />
-
       {points.map((p, i) => (
         <g key={`${p.label}-${i}`}>
           <circle cx={x(i)} cy={y(values[i])} r="3" fill="#C4B5FD">
@@ -437,7 +395,6 @@ function TrendChart({
     </svg>
   );
 }
-
 function AttendanceDonut({
   rate,
   checkedIn,
@@ -451,7 +408,6 @@ function AttendanceDonut({
 }) {
   const r = 42;
   const c = 2 * Math.PI * r;
-
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
@@ -481,7 +437,6 @@ function AttendanceDonut({
             <span className="text-[10px] text-slate-400">Attendance</span>
           </div>
         </div>
-
         <ul className="space-y-2 text-xs text-slate-300">
           <li className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full bg-[#A78BFA]" />
@@ -494,18 +449,15 @@ function AttendanceDonut({
           </li>
         </ul>
       </div>
-
       <p className="text-[11px] text-slate-400">
         From {formatNumber(total)} tickets sold
       </p>
     </div>
   );
 }
-
 // ------------------------------------------------------------------
 // Sections
 // ------------------------------------------------------------------
-
 function ActivityCard({ items }: { items: ActivityItem[] }) {
   return (
     <Card
@@ -558,7 +510,6 @@ function ActivityCard({ items }: { items: ActivityItem[] }) {
     </Card>
   );
 }
-
 function RejectModal({
   concert,
   busy,
@@ -573,7 +524,6 @@ function RejectModal({
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState("");
-
   return (
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
@@ -587,7 +537,6 @@ function RejectModal({
           Tell the organizer why{" "}
           <b className="text-slate-200">{concert.name}</b> was rejected.
         </p>
-
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -595,9 +544,7 @@ function RejectModal({
           placeholder="Rejection reason (required)"
           className="mt-3 w-full resize-none rounded-lg border border-white/10 bg-[#161A25] p-3 text-xs text-white outline-none placeholder:text-slate-500 focus:border-[#A78BFA]"
         />
-
         {error && <p className="mt-2 text-xs text-rose-400">{error}</p>}
-
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
@@ -620,7 +567,6 @@ function RejectModal({
     </div>
   );
 }
-
 function ConcertTable({
   concerts,
   search,
@@ -635,11 +581,9 @@ function ConcertTable({
   const [actionError, setActionError] = useState("");
   const [rejecting, setRejecting] = useState<ConcertRow | null>(null);
   const [rejectError, setRejectError] = useState("");
-
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return concerts;
-
     return concerts.filter((c) =>
       [c.name, c.organizer_name, c.venue_name, c.category_name]
         .join(" ")
@@ -647,16 +591,13 @@ function ConcertTable({
         .includes(keyword)
     );
   }, [concerts, search]);
-
   useEffect(() => setPage(1), [search]);
-
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, totalPages);
   const visible = filtered.slice(
     (current - 1) * PAGE_SIZE,
     current * PAGE_SIZE
   );
-
   async function handleApprove(concert: ConcertRow) {
     setBusyId(concert.id);
     setActionError("");
@@ -669,7 +610,6 @@ function ConcertTable({
       setBusyId(null);
     }
   }
-
   async function handleReject(reason: string) {
     if (!rejecting) return;
     setBusyId(rejecting.id);
@@ -684,7 +624,6 @@ function ConcertTable({
       setBusyId(null);
     }
   }
-
   return (
     <Card
       title="Recent & Ongoing Concert"
@@ -708,7 +647,6 @@ function ConcertTable({
           {actionError}
         </p>
       )}
-
       <div className="-mx-4 overflow-x-auto">
         <table className="w-full min-w-[560px] border-collapse text-left">
           <thead>
@@ -735,7 +673,6 @@ function ConcertTable({
                   c.approval_status === "pending" ||
                   c.approval_status === "revision_required";
                 const busy = busyId === c.id;
-
                 return (
                   <tr key={c.id} className="border-t border-white/[0.06]">
                     <td className="px-4 py-2.5">
@@ -814,7 +751,6 @@ function ConcertTable({
           </tbody>
         </table>
       </div>
-
       <div className="mt-3 flex items-center justify-between">
         <p className="text-[11px] text-slate-400">
           Showing {visible.length} of {filtered.length} concerts
@@ -837,7 +773,6 @@ function ConcertTable({
           ))}
         </nav>
       </div>
-
       {rejecting && (
         <RejectModal
           concert={rejecting}
@@ -850,15 +785,12 @@ function ConcertTable({
     </Card>
   );
 }
-
 // ------------------------------------------------------------------
 // Page
 // ------------------------------------------------------------------
-
 function AdminDashboardContent() {
   const searchParams = useSearchParams();
   const search = searchParams.get("search") ?? "";
-
   const [range, setRange] = useState<DashboardRange>("week");
   const [metric, setMetric] = useState<"tickets" | "revenue">("tickets");
   const [data, setData] = useState<DashboardData | null>(null);
@@ -866,7 +798,6 @@ function AdminDashboardContent() {
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [name, setName] = useState("");
-
   useEffect(() => {
     try {
       const stored = localStorage.getItem("user");
@@ -875,12 +806,10 @@ function AdminDashboardContent() {
       setName("");
     }
   }, []);
-
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError("");
-
     getAdminDashboard(range, controller.signal)
       .then(setData)
       .catch((err: Error) => {
@@ -889,13 +818,10 @@ function AdminDashboardContent() {
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-
     return () => controller.abort();
   }, [range, reloadKey]);
-
   function exportCsv() {
     if (!data) return;
-
     const { stats } = data;
     const summary = [
       ["Total Users", stats.total_users],
@@ -905,7 +831,6 @@ function AdminDashboardContent() {
       ["Tickets Sold", stats.tickets_sold],
       ["Gross Revenue", stats.gross_revenue],
     ];
-
     const header = ["Concert", "Organizer", "Date", "Venue", "Category", "Status"];
     const rows = data.concerts.map((c) => [
       c.name,
@@ -915,13 +840,11 @@ function AdminDashboardContent() {
       c.category_name,
       c.display_status,
     ]);
-
     const csv = [["Metric", "Value"], ...summary, [], header, ...rows]
       .map((row) =>
         row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
       )
       .join("\n");
-
     const url = URL.createObjectURL(
       new Blob([csv], { type: "text/csv;charset=utf-8;" })
     );
@@ -931,7 +854,6 @@ function AdminDashboardContent() {
     link.click();
     URL.revokeObjectURL(url);
   }
-
   if (!data && loading) {
     return (
       <p className="py-24 text-center text-sm text-slate-400">
@@ -939,7 +861,6 @@ function AdminDashboardContent() {
       </p>
     );
   }
-
   if (!data) {
     return (
       <div className="py-24 text-center">
@@ -956,51 +877,32 @@ function AdminDashboardContent() {
       </div>
     );
   }
-
   const { stats } = data;
-
   return (
     <div className="mx-auto w-full max-w-[1180px] space-y-3.5">
       {/* WELCOME */}
-      <section className="relative isolate overflow-hidden rounded-2xl border border-[#8B5CF6]/20">
-        <img
-          src="/images/hero/hero.jpg"
-          alt=""
-          className="absolute inset-0 -z-20 h-full w-full object-cover"
-        />
-        <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(11,17,34,0.92)_0%,rgba(37,35,77,0.75)_55%,rgba(11,17,34,0.35)_100%)]" />
-
-        <div className="flex flex-col justify-between gap-5 px-5 py-7 sm:flex-row sm:items-end sm:px-7 sm:py-9">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold tracking-[2.5px] text-[#A5A0FF] sm:text-[11px]">
-              LYNORA SUPER ADMIN
-            </p>
-            <h1 className="mt-2 text-2xl font-extrabold leading-tight text-white sm:text-3xl">
-              Hallo,
-              <br />
-              <span className="bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text text-transparent">
-                {name || "Admin"}
-              </span>{" "}
-              👋
-            </h1>
-          </div>
-
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="inline-flex h-9 w-fit shrink-0 items-center rounded-lg bg-[linear-gradient(100deg,#8B5CF6_0%,#6539D5_100%)] px-3.5 text-[11px] font-semibold text-white shadow-[0_6px_20px_rgba(139,92,246,0.4)] transition hover:brightness-110"
-          >
-            Export Data
-          </button>
-        </div>
-      </section>
-
-      {error && (
-        <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-          {error}
-        </p>
-      )}
-
+      <AdminPageHero
+        eyebrow="LYNORA SUPER ADMIN"
+        title={
+          <>
+            Welcome back,
+            <br />
+            <span className="bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text text-transparent">
+              {name || "Admin"}
+            </span>{" "}
+            👋
+          </>
+        }
+        description="Manage users, oversee concerts, and monitor platform performance on LYNORA."
+      >
+        <button
+          type="button"
+          onClick={exportCsv}
+          className="inline-flex h-9 w-fit shrink-0 items-center rounded-lg bg-[linear-gradient(100deg,#8B5CF6_0%,#6539D5_100%)] px-3.5 text-[11px] font-semibold text-white shadow-[0_6px_20px_rgba(139,92,246,0.4)] transition hover:brightness-110"
+        >
+          Export Data
+        </button>
+      </AdminPageHero>
       {/* STATS */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard
@@ -1024,7 +926,7 @@ function AdminDashboardContent() {
         <StatCard
           label="Total Organizers"
           value={formatNumber(stats.total_organizers)}
-          icon="/icons/sales(1).png"
+          icon="/icons/sales (1).png"
           note={<Change value={stats.organizers_change} />}
         />
         <StatCard
@@ -1053,10 +955,8 @@ function AdminDashboardContent() {
           />
         </div>
       </section>
-
       {/* RANGE */}
       <SegmentedTabs tabs={RANGES} value={range} onChange={setRange} />
-
       {/* TREND + ATTENDANCE */}
       <div
         className={`grid gap-4 transition-opacity lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] ${
@@ -1079,7 +979,6 @@ function AdminDashboardContent() {
         >
           <TrendChart points={data.trend} metric={metric} />
         </Card>
-
         <Card title="Attendance Overview">
           <AttendanceDonut
             rate={data.attendance.rate}
@@ -1089,7 +988,6 @@ function AdminDashboardContent() {
           />
         </Card>
       </div>
-
       {/* CONCERTS + ACTIVITY */}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
         <ConcertTable
@@ -1102,7 +1000,6 @@ function AdminDashboardContent() {
     </div>
   );
 }
-
 export default function AdminDashboardPage() {
   return (
     <Suspense

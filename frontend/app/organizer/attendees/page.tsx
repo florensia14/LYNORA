@@ -273,7 +273,7 @@ export default function OrganizerAttendeesPage() {
               />
             ) : (
               <div className="flex h-[68px] w-[68px] shrink-0 items-center justify-center rounded-xl border border-[#8B5CF6]/20 bg-gradient-to-br from-[#45258B] to-[#172C50]">
-                <img src="/icons/Attendees(1).png" alt="" className="h-8 w-8 object-contain" />
+                <img src="/icons/Attendees (1).png" alt="" className="h-8 w-8 object-contain" />
               </div>
             )}
 
@@ -320,7 +320,7 @@ export default function OrganizerAttendeesPage() {
         <StatCard
           label="Total Tickets"
           value={formatNumber(attendees.length)}
-          icon="/icons/Attendees(1).png"
+          icon="/icons/Attendees (1).png"
           tone="blue"
         />
         <StatCard
@@ -338,7 +338,7 @@ export default function OrganizerAttendeesPage() {
         <StatCard
           label="Check-In Rate"
           value={`${checkInRate}%`}
-          icon="/icons/sales(1).png"
+          icon="/icons/sales (1).png"
           tone="purple"
           progress={checkInRate}
         />
@@ -415,7 +415,7 @@ export default function OrganizerAttendeesPage() {
         <div className="flex flex-col gap-2 border-b border-white/[0.07] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#202A4F]">
-              <img src="/icons/Attendees(1).png" alt="" className="h-4 w-4 object-contain" />
+              <img src="/icons/Attendees (1).png" alt="" className="h-4 w-4 object-contain" />
             </div>
             <div>
               <h2 className="text-sm font-bold text-white">Attendee Records</h2>

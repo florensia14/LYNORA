@@ -2077,7 +2077,7 @@ async function getOrganizerConcerts(req, res) {
 async function getOrganizerCreateOptions(req, res) {
   try {
     const [categories] = await db.execute(
-      "SELECT id, name FROM categories ORDER BY name ASC"
+      "SELECT id, name FROM categories WHERE status = 'active' ORDER BY name ASC"
     );
 
     const [venues] = await db.execute(
@@ -2440,6 +2440,86 @@ async function getAdminDashboard(req, res) {
 }
 
 
+
+// ======================================================
+// SUPER ADMIN: MANAGE CONCERTS
+// GET /api/events/admin/concerts
+// ======================================================
+async function getAdminConcerts(req, res) {
+  try {
+    const [rows] = await db.execute(
+      `SELECT
+         e.id, e.name, e.poster_url, e.start_date, e.end_date,
+         e.status, e.approval_status, e.publication_status,
+         v.name AS venue_name, v.address AS venue_address,
+         c.name AS category_name, u.name AS organizer_name,
+         COALESCE(q.quota, 0) AS quota,
+         COALESCE(s.sold, 0) AS sold,
+         COALESCE(s.revenue, 0) AS revenue
+       FROM events e
+       JOIN venues v ON v.id = e.venue_id
+       JOIN categories c ON c.id = e.category_id
+       JOIN users u ON u.id = e.organizer_id
+       LEFT JOIN (
+         SELECT event_id, SUM(quota) AS quota
+         FROM ticket_categories GROUP BY event_id
+       ) q ON q.event_id = e.id
+       LEFT JOIN (
+         SELECT tc.event_id, SUM(oi.quantity) AS sold, SUM(oi.subtotal) AS revenue
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id AND o.status = 'paid'
+         JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+         GROUP BY tc.event_id
+       ) s ON s.event_id = e.id
+       WHERE e.deleted_at IS NULL
+       ORDER BY
+         (e.approval_status IN ('pending', 'revision_required')) DESC,
+         e.created_at DESC`
+    );
+
+    const now = Date.now();
+    const concerts = rows.map((row) => {
+      let displayStatus;
+      if (row.status === "cancelled") displayStatus = "Cancelled";
+      else if (row.approval_status === "rejected") displayStatus = "Rejected";
+      else if (row.approval_status === "revision_required") displayStatus = "Revision";
+      else if (row.approval_status !== "approved") displayStatus = "Pending";
+      else if (row.publication_status !== "published") displayStatus = "Draft";
+      else if (new Date(row.end_date).getTime() < now) displayStatus = "Completed";
+      else if (new Date(row.start_date).getTime() <= now) displayStatus = "Ongoing";
+      else displayStatus = "Published";
+
+      return {
+        id: Number(row.id), name: row.name, poster_url: row.poster_url,
+        start_date: row.start_date, end_date: row.end_date,
+        venue_name: row.venue_name, venue_address: row.venue_address,
+        category_name: row.category_name, organizer_name: row.organizer_name,
+        quota: Number(row.quota || 0), sold: Number(row.sold || 0),
+        revenue: Number(row.revenue || 0), status: row.status,
+        approval_status: row.approval_status,
+        publication_status: row.publication_status,
+        display_status: displayStatus,
+      };
+    });
+
+    const stats = {
+      total: concerts.length,
+      ongoing: concerts.filter((e) => e.display_status === "Ongoing").length,
+      published: concerts.filter((e) => e.display_status === "Published").length,
+      draft: concerts.filter((e) => e.display_status === "Draft").length,
+      cancelled: concerts.filter((e) => e.display_status === "Cancelled").length,
+    };
+
+    return res.json({ success: true, stats, total: concerts.length, concerts });
+  } catch (error) {
+    console.error("Get admin concerts error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil daftar konser untuk Super Admin",
+    });
+  }
+}
+
 module.exports = {
   getEvents,
   getEventById,
@@ -2457,4 +2537,5 @@ module.exports = {
   getOrganizerConcerts,
   getOrganizerCreateOptions,
   getAdminDashboard,
+  getAdminConcerts,
 };

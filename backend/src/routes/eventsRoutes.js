@@ -17,6 +17,7 @@ const {
   getOrganizerConcerts,
   getOrganizerCreateOptions,
   getAdminDashboard,
+  getAdminConcerts,
 } = require("../controllers/eventsController");
 
 const {
@@ -89,6 +90,14 @@ router.get(
   authenticateToken,
   authorizeRoles("super_admin"),
   getAdminDashboard
+);
+
+// Super Admin: daftar seluruh konser untuk Manage Concerts.
+router.get(
+  "/admin/concerts",
+  authenticateToken,
+  authorizeRoles("super_admin"),
+  getAdminConcerts
 );
 
 // ======================================================

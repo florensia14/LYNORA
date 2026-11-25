@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import Link from "next/link";
@@ -33,9 +32,7 @@ type NotificationItem = {
   tone: "success" | "purple" | "blue" | "pink" | "warning";
 };
 
-const API_ORIGIN = (
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
-)
+const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000")
   .replace(/\/api\/?$/, "")
   .replace(/\/$/, "");
 
@@ -60,17 +57,13 @@ const TYPE_STYLE: Record<
 function timeAgo(value: string) {
   const diff = Date.now() - new Date(value).getTime();
   if (!Number.isFinite(diff)) return "";
-
   const minutes = Math.floor(diff / 60000);
   if (minutes < 1) return "Just now";
   if (minutes < 60) return `${minutes} min ago`;
-
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} hr ago`;
-
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days} ${days === 1 ? "day" : "days"} ago`;
-
   return new Date(value).toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
@@ -80,7 +73,6 @@ function timeAgo(value: string) {
 
 function toNotificationItem(item: ApiNotification): NotificationItem {
   const style = TYPE_STYLE[item.type] ?? TYPE_STYLE.announcement;
-
   return {
     id: item.id,
     title: item.title,
@@ -94,15 +86,11 @@ function toNotificationItem(item: ApiNotification): NotificationItem {
 
 function getProfilePhoto(user: AdminUser | null) {
   if (!user?.profile_photo) return "/icons/user.png";
-
   const photo = user.profile_photo;
-
   if (photo.startsWith("data:")) return photo;
-
   const url = photo.startsWith("http")
     ? photo
     : `${API_ORIGIN}${photo.startsWith("/") ? "" : "/"}${photo}`;
-
   return `${url}${url.includes("?") ? "&" : "?"}v=${user.photo_version || 0}`;
 }
 
@@ -114,10 +102,8 @@ function authHeaders(): Record<string, string> {
 export default function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-
   const [user, setUser] = useState<AdminUser | null>(null);
   const [search, setSearch] = useState("");
-
   const [showNotificationsPanel, setShowNotificationsPanel] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [activeNotificationTab, setActiveNotificationTab] =
@@ -126,15 +112,13 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationActionLoading, setNotificationActionLoading] =
     useState(false);
-
-  // Read user + guard: hanya super_admin yang boleh masuk /admin
+  // Read the signed-in user and restrict this area to super admins.
   useEffect(() => {
     const readUser = () => {
       try {
         const stored = localStorage.getItem("user");
         const parsed: AdminUser | null = stored ? JSON.parse(stored) : null;
         setUser(parsed);
-
         if (!localStorage.getItem("token") || parsed?.role !== "super_admin") {
           router.replace("/login");
         }
@@ -143,27 +127,21 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         router.replace("/login");
       }
     };
-
     readUser();
-
     window.addEventListener("lynora:user-updated", readUser);
     window.addEventListener("storage", readUser);
-
     return () => {
       window.removeEventListener("lynora:user-updated", readUser);
       window.removeEventListener("storage", readUser);
     };
   }, [router]);
-
   useEffect(() => {
     setSearch("");
     setShowNotificationsPanel(false);
     setShowProfileMenu(false);
   }, [pathname]);
-
   useEffect(() => {
     let cancelled = false;
-
     async function loadNotifications() {
       setNotificationsLoading(true);
       try {
@@ -171,10 +149,8 @@ export default function AdminShell({ children }: { children: ReactNode }) {
           headers: authHeaders(),
         });
         if (!res.ok) throw new Error("Failed to load notifications");
-
         const data = await res.json();
         const list: ApiNotification[] = data.notifications ?? [];
-
         if (!cancelled) setNotifications(list.map(toNotificationItem));
       } catch {
         if (!cancelled) setNotifications([]);
@@ -182,26 +158,20 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         if (!cancelled) setNotificationsLoading(false);
       }
     }
-
     loadNotifications();
-
     return () => {
       cancelled = true;
     };
   }, []);
-
   const profilePhoto = getProfilePhoto(user);
-
   const unreadCount = useMemo(
     () => notifications.filter((item) => !item.read).length,
     [notifications]
   );
-
   const categoryCounts: Record<NotificationTab, number> = {
     all: notifications.length,
     unread: unreadCount,
   };
-
   const filteredNotifications = useMemo(
     () =>
       activeNotificationTab === "unread"
@@ -209,7 +179,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         : notifications,
     [notifications, activeNotificationTab]
   );
-
   async function markAllNotificationsRead() {
     if (unreadCount === 0) return;
     setNotificationActionLoading(true);
@@ -225,7 +194,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       setNotificationActionLoading(false);
     }
   }
-
   function openNotification(item: NotificationItem) {
     if (!item.read) {
       setNotifications((items) =>
@@ -236,11 +204,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         headers: authHeaders(),
       }).catch(() => {});
     }
-
     setShowNotificationsPanel(false);
     router.push("/admin/notifications");
   }
-
   function handleLogout() {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
@@ -248,11 +214,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     setShowProfileMenu(false);
     router.replace("/login");
   }
-
   // Search memfilter tabel konser di dashboard lewat ?search=
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     const keyword = search.trim();
     router.push(
       keyword
@@ -260,20 +224,27 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         : "/admin/dashboard"
     );
   }
-
   return (
     <div className="min-h-screen bg-[#0B1122] text-white">
       <Sidebar fallbackRole="super_admin" />
-
       {/* MAIN CONTENT */}
-      <div className="min-h-screen pt-14 lg:pl-[205px] lg:pt-0">
+      <div className="min-h-screen pt-14 transition-[padding] duration-300 lg:pl-[var(--organizer-sidebar-width,240px)] lg:pt-0">
         {/* TOPBAR */}
         <header className="sticky top-14 z-30 w-full border-b border-white/[0.07] bg-[linear-gradient(90deg,#0D1328_0%,#162140_25%,#1E2B54_50%,#141C3D_70%,#0B1122_100%)] px-3 py-2.5 backdrop-blur-xl sm:px-5 lg:top-0 xl:px-6">
-          <div className="flex w-full min-w-0 items-center justify-between gap-3">
+          <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2.5 lg:grid-cols-[minmax(130px,1fr)_minmax(180px,340px)_auto] lg:gap-x-3 lg:gap-y-0 xl:grid-cols-[minmax(160px,1fr)_minmax(220px,360px)_auto] xl:gap-x-4">
+            {/* GREETING */}
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-bold tracking-tight text-white sm:text-base lg:text-lg">
+                Hello, {user?.name?.split(" ")[0] || "Admin"} 👋
+              </h1>
+              <p className="mt-0.5 hidden max-w-full truncate text-[11px] text-slate-400 xl:block">
+                Manage users, oversee concerts, and monitor platform performance on LYNORA.
+              </p>
+            </div>
             {/* SEARCH */}
             <form
               onSubmit={handleSearch}
-              className="flex h-10 w-full min-w-0 max-w-[380px] items-center gap-2.5 rounded-xl border border-[#7E54DF] bg-[#161A25] px-3 transition focus-within:border-[#A78BFA] focus-within:ring-2 focus-within:ring-[#8B5CF6]/20 xl:h-11"
+              className="col-span-2 flex h-10 w-full min-w-0 items-center gap-2.5 rounded-xl border border-[#7E54DF] bg-[#161A25] px-3 transition focus-within:border-[#A78BFA] focus-within:ring-2 focus-within:ring-[#8B5CF6]/20 lg:col-span-1 lg:col-start-2 lg:row-start-1 lg:h-10 xl:h-11"
             >
               <img
                 src="/icons/cari.png"
@@ -289,9 +260,8 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                 className="w-full min-w-0 bg-transparent text-[11px] text-white outline-none placeholder:text-[#A5A9B8] sm:text-xs xl:text-sm"
               />
             </form>
-
             {/* RIGHT ACTIONS */}
-            <div className="flex shrink-0 items-center gap-2 sm:gap-3 xl:gap-4">
+            <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3 lg:col-start-3 lg:row-start-1 lg:gap-3 xl:gap-4">
               {/* NOTIFICATION */}
               <div className="relative shrink-0">
                 <button
@@ -300,7 +270,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                     setShowNotificationsPanel((open) => !open);
                     setShowProfileMenu(false);
                   }}
-                  aria-label="Buka notifikasi"
+                  aria-label="Open notifications"
                   aria-expanded={showNotificationsPanel}
                   className={`relative flex h-10 w-10 items-center justify-center rounded-xl border transition duration-200 sm:h-11 sm:w-11 ${
                     showNotificationsPanel
@@ -322,33 +292,29 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                     <path d="M10 21h4" />
                     <path d="M12 2v1" />
                   </svg>
-
                   {unreadCount > 0 && (
                     <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-[#111A34] bg-[#C30437] px-1 text-[10px] font-bold text-white">
                       {unreadCount}
                     </span>
                   )}
                 </button>
-
                 {showNotificationsPanel && (
                   <>
                     <button
                       type="button"
-                      aria-label="Tutup notifikasi"
+                      aria-label="Close notifications"
                       onClick={() => setShowNotificationsPanel(false)}
                       className="fixed inset-0 z-40 cursor-default"
                     />
-
                     <section
                       className="absolute right-[-48px] top-[calc(100%+12px)] z-50 w-[min(370px,calc(100vw-20px))] overflow-hidden rounded-xl border border-[#7650C8]/70 bg-[linear-gradient(145deg,#111827_0%,#10182B_55%,#11172A_100%)] shadow-[0_18px_55px_rgba(0,0,0,0.58)] lg:right-[-42px]"
-                      aria-label="Panel notifikasi"
+                      aria-label="Notifications panel"
                     >
                       <div className="absolute -top-[7px] right-[60px] h-3.5 w-3.5 rotate-45 border-l border-t border-[#7650C8]/70 bg-[#111827]" />
-
                       <div className="relative flex items-center justify-between gap-3 px-4 pb-3 pt-4">
                         <div>
                           <h2 className="text-base font-bold tracking-tight text-white">
-                            Notifikasi
+                            Notifications
                           </h2>
                           <p className="mt-0.5 text-[11px] text-slate-400">
                             {unreadCount > 0
@@ -356,7 +322,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                               : "All notifications have been read"}
                           </p>
                         </div>
-
                         <button
                           type="button"
                           onClick={markAllNotificationsRead}
@@ -366,7 +331,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                           ✓ Mark all as read
                         </button>
                       </div>
-
                       <div className="flex gap-1.5 overflow-x-auto px-4 pb-3">
                         {notificationTabs.map((tab) => (
                           <button
@@ -383,11 +347,10 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                           </button>
                         ))}
                       </div>
-
                       <div className="max-h-[min(330px,55vh)] overflow-y-auto px-4">
                         {notificationsLoading ? (
                           <div className="border-t border-white/[0.07] py-8 text-center text-[11px] text-slate-400">
-                            Memuat notifikasi...
+                            Loading notifications...
                           </div>
                         ) : filteredNotifications.length > 0 ? (
                           filteredNotifications.map((item) => (
@@ -412,7 +375,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                               >
                                 {item.icon}
                               </span>
-
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-start justify-between gap-2">
                                   <span
@@ -430,7 +392,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                                   {item.description}
                                 </span>
                               </span>
-
                               {!item.read && (
                                 <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#C084FC] shadow-[0_0_10px_rgba(192,132,252,0.55)]" />
                               )}
@@ -447,7 +408,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                           </div>
                         )}
                       </div>
-
                       <div className="border-t border-white/[0.08] px-4 py-3 text-center">
                         <Link
                           href="/admin/notifications"
@@ -462,7 +422,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                   </>
                 )}
               </div>
-
               {/* PROFILE MENU */}
               <div className="relative shrink-0">
                 <button
@@ -471,7 +430,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                     setShowProfileMenu((open) => !open);
                     setShowNotificationsPanel(false);
                   }}
-                  aria-label="Buka menu profil"
+                  aria-label="Open profile menu"
                   aria-expanded={showProfileMenu}
                   className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border-2 border-[#7667E8] bg-[#222E4C] transition hover:scale-105 sm:h-10 sm:w-10"
                 >
@@ -486,16 +445,14 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                     }}
                   />
                 </button>
-
                 {showProfileMenu && (
                   <>
                     <button
                       type="button"
-                      aria-label="Tutup menu profil"
+                      aria-label="Close profile menu"
                       className="fixed inset-0 z-40 cursor-default"
                       onClick={() => setShowProfileMenu(false)}
                     />
-
                     <div className="absolute right-0 top-12 z-50 w-[min(224px,calc(100vw-24px))] overflow-hidden rounded-xl border border-white/10 bg-[#17213C] p-2 shadow-2xl">
                       <div className="border-b border-white/10 px-3 py-3">
                         <p className="truncate text-sm font-semibold text-white">
@@ -505,7 +462,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                           {user?.email || ""}
                         </p>
                       </div>
-
                       <Link
                         href="/admin/profile"
                         onClick={() => setShowProfileMenu(false)}
@@ -513,7 +469,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                       >
                         My Profile
                       </Link>
-
                       <Link
                         href="/admin/settings"
                         onClick={() => setShowProfileMenu(false)}
@@ -521,7 +476,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
                       >
                         Settings
                       </Link>
-
                       <button
                         type="button"
                         onClick={handleLogout}
@@ -536,7 +490,6 @@ export default function AdminShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </header>
-
         <main className="min-h-screen px-4 pb-10 pt-5 sm:px-6 lg:px-7 lg:pt-7 xl:px-9">
           {children}
         </main>
