@@ -1,202 +1,106 @@
-
-
 "use client";
-
-
-
 import { useEffect, useMemo, useState } from "react";
-
 import { useRouter, useSearchParams } from "next/navigation";
-
 import Link from "next/link";
-
 import CustomerShell from "@/components/layout/CustomerShell";
-
-import {
-
-  fetchConcertById,
-
-  createCheckoutOrder,
-
-  createOrderPayment,
-
-  checkPaymentStatus,
-
-} from "@/lib/api";
-
+import {fetchConcertById, createCheckoutOrder, createOrderPayment,checkPaymentStatus,} from "@/lib/api";
 import type { Concert } from "@/lib/customer";
 
-
-
 declare global {
-
   interface Window {
-
     snap?: {
-
       pay: (
-
         token: string,
-
         callbacks?: {
-
           onSuccess?: (result: unknown) => void;
-
           onPending?: (result: unknown) => void;
-
           onError?: (result: unknown) => void;
-
           onClose?: () => void;
-
         },
-
       ) => void;
-
     };
-
   }
-
 }
-
-
 
 type TicketCategory = {
-
   id: number;
-
   name: string;
-
   price: number;
-
   benefit?: string;
-
   remaining?: number;
-
 };
-
-
 
 type CheckoutConcert = Concert & {
-
   ticket_categories?: TicketCategory[];
-
 };
 
-
-
 const MIDTRANS_CLIENT_KEY =
-
   process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || "";
-
-
-
 const MIDTRANS_IS_PRODUCTION =
-
   process.env.NEXT_PUBLIC_MIDTRANS_IS_PRODUCTION === "true";
-
-
-
 function money(value: number) {
-
   return new Intl.NumberFormat("id-ID", {
-
     style: "currency",
-
     currency: "IDR",
-
     maximumFractionDigits: 0,
-
   }).format(value);
-
 }
 
-
-
 function formatDate(value: string) {
-
   return new Intl.DateTimeFormat("en-GB", {
-
     weekday: "short",
-
     day: "2-digit",
-
     month: "short",
-
     year: "numeric",
-
     hour: "2-digit",
-
     minute: "2-digit",
-
     timeZone: "Asia/Jakarta",
-
   }).format(new Date(value)) + " WIB";
 
 }
 
-
-
 export default function CheckoutPage() {
-
   const router = useRouter();
-
   const params = useSearchParams();
-
-
-
   const eventId = Number(params.get("eventId"));
-
   const categoryId = Number(params.get("ticketCategoryId"));
-
   const initialQuantity = Number(params.get("quantity") || 1);
-
-
-
   const [concert, setConcert] = useState<CheckoutConcert | null>(null);
-
   const [quantity, setQuantity] = useState(
-
     Number.isSafeInteger(initialQuantity)
-
       ? Math.min(10, Math.max(1, initialQuantity))
-
       : 1,
-
   );
 
-
-
   const [loading, setLoading] = useState(true);
-
   const [processing, setProcessing] = useState(false);
-
   const [error, setError] = useState("");
-
-
-
   const [orderId, setOrderId] = useState<number | null>(null);
-
   const [checkingStatus, setCheckingStatus] = useState(false);
 
+  const [attendees, setAttendees] = useState<
+    { full_name: string; email: string; phone: string }[]
+  >(() =>
+    Array.from({ length: quantity }, () => ({
+      full_name: "",
+      email: "",
+      phone: "",
+    })),
+  );
 
-
-  const [attendeeName, setAttendeeName] = useState("");
-
-  const [attendeeEmail, setAttendeeEmail] = useState("");
-
-  const [attendeePhone, setAttendeePhone] = useState("");
-
-
+  useEffect(() => {
+    setAttendees((current) =>
+      Array.from({ length: quantity }, (_, index) =>
+        current[index] ?? { full_name: "", email: "", phone: "" },
+      ),
+    );
+  }, [quantity]);
 
   const [agreed, setAgreed] = useState(false);
-
-
 
   useEffect(() => {
 
     let mounted = true;
-
-
 
     async function loadCheckout() {
 
@@ -205,8 +109,6 @@ export default function CheckoutPage() {
         setLoading(true);
 
         setError("");
-
-
 
         if (
 
@@ -224,27 +126,17 @@ export default function CheckoutPage() {
 
         }
 
-
-
         const data = await fetchConcertById(eventId);
-
-
 
         if (!mounted) return;
 
-
-
         const detail = data as CheckoutConcert;
-
-
 
         const category = detail.ticket_categories?.find(
 
           (item) => Number(item.id) === categoryId,
 
         );
-
-
 
         if (!category) {
 
@@ -256,15 +148,11 @@ export default function CheckoutPage() {
 
         }
 
-
-
         if (Number(category.remaining ?? 0) < 1) {
 
           throw new Error("Tiket untuk kategori ini sedang tidak tersedia.");
 
         }
-
-
 
         setConcert(detail);
 
@@ -292,11 +180,7 @@ export default function CheckoutPage() {
 
     }
 
-
-
     loadCheckout();
-
-
 
     return () => {
 
@@ -305,8 +189,6 @@ export default function CheckoutPage() {
     };
 
   }, [eventId, categoryId]);
-
-
 
   const selectedTicket = useMemo(() => {
 
@@ -318,17 +200,11 @@ export default function CheckoutPage() {
 
   }, [concert, categoryId]);
 
-
-
   const subtotal = Number(selectedTicket?.price || 0) * quantity;
-
-
 
   async function handleContinuePayment() {
 
     if (!concert || !selectedTicket || processing) return;
-
-
 
     if (!agreed) {
 
@@ -338,27 +214,27 @@ export default function CheckoutPage() {
 
     }
 
-
-
-    if (!attendeeName.trim() || !attendeeEmail.trim() || !attendeePhone.trim()) {
-
-      setError("Lengkapi informasi pemesan terlebih dahulu.");
-
+    if (attendees.length !== quantity) {
+      setError("Jumlah data attendee tidak sesuai dengan jumlah tiket.");
       return;
-
     }
 
+    for (let index = 0; index < attendees.length; index += 1) {
+      const attendee = attendees[index];
 
+      if (!attendee.full_name.trim()) {
+        setError(`Nama lengkap attendee ${index + 1} wajib diisi.`);
+        return;
+      }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(attendeeEmail)) {
-
-      setError("Format email tidak valid.");
-
-      return;
-
+      if (
+        attendee.email.trim() &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(attendee.email.trim())
+      ) {
+        setError(`Format email attendee ${index + 1} tidak valid.`);
+        return;
+      }
     }
-
-
 
     if (!MIDTRANS_CLIENT_KEY) {
 
@@ -368,15 +244,11 @@ export default function CheckoutPage() {
 
     }
 
-
-
     try {
 
       setProcessing(true);
 
       setError("");
-
-
 
       // 1. Buat order pada backend.
 
@@ -387,16 +259,17 @@ export default function CheckoutPage() {
                 ticket_category_id: categoryId,
 
                 quantity,
+                attendees: attendees.map((attendee) => ({
+                  full_name: attendee.full_name.trim(),
+                  email: attendee.email.trim() || null,
+                  phone: attendee.phone.trim() || null,
+                })),
 
             },
 
         ]);
 
-
-
 setOrderId(orderResult.order.id);
-
-
 
       // 2. Minta Snap token untuk order tersebut.
 
@@ -406,11 +279,7 @@ setOrderId(orderResult.order.id);
 
       );
 
-
-
       const snapToken = paymentResult.payment?.snap_token;
-
-
 
       if (!snapToken) {
 
@@ -418,27 +287,19 @@ setOrderId(orderResult.order.id);
 
       }
 
-
-
       // 3. Buka pembayaran Midtrans Snap.
 
       if (!window.snap) {
 
         const script = document.createElement("script");
 
-
-
         script.src = MIDTRANS_IS_PRODUCTION
 
-          ? "https://app.midtrans.com/snap/snap.js"
+          ? "https\://app.midtrans.com/snap/snap.js"
 
-          : "https://app.sandbox.midtrans.com/snap/snap.js";
-
-
+          : "https\://app.sandbox.midtrans.com/snap/snap.js";
 
         script.setAttribute("data-client-key", MIDTRANS_CLIENT_KEY);
-
-
 
         await new Promise<void>((resolve, reject) => {
 
@@ -448,23 +309,17 @@ setOrderId(orderResult.order.id);
 
             reject(new Error("Gagal memuat halaman pembayaran Midtrans."));
 
-
-
           document.body.appendChild(script);
 
         });
 
       }
 
-
-
       if (!window.snap) {
 
         throw new Error("Midtrans Snap belum siap.");
 
       }
-
-
 
       window.snap.pay(snapToken, {
 
@@ -530,46 +385,69 @@ setOrderId(orderResult.order.id);
 
   }
 
-
-
   async function handleCheckPaymentStatus() {
+
     if (!orderId || checkingStatus) return;
 
     try {
+
       setCheckingStatus(true);
+
       setError("");
 
       const result = await checkPaymentStatus(orderId);
+
       const paymentStatus = String(result.payment_status ?? "").toLowerCase();
+
       const orderStatus = String(result.order_status ?? "").toLowerCase();
 
       if (
+
         ["success", "paid", "settlement"].includes(paymentStatus) ||
+
         ["paid", "completed"].includes(orderStatus)
+
       ) {
+
         router.push("/customer/tickets");
+
         return;
+
       }
 
       if (["expired", "failed", "cancelled", "refunded"].includes(paymentStatus)) {
+
         setError(`Status pembayaran: ${paymentStatus}. Silakan periksa pesanan kamu.`);
+
         return;
+
       }
 
       setError(
-        `Pembayaran belum dikonfirmasi. Status saat ini: ${paymentStatus || "pending"}. Silakan cek kembali beberapa saat lagi.`,
-      );
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Gagal memeriksa status pembayaran.",
-      );
-    } finally {
-      setCheckingStatus(false);
-    }
-  }
 
+        `Pembayaran belum dikonfirmasi. Status saat ini: ${paymentStatus || "pending"}. Silakan cek kembali beberapa saat lagi.`,
+
+      );
+
+    } catch (err) {
+
+      setError(
+
+        err instanceof Error
+
+          ? err.message
+
+          : "Gagal memeriksa status pembayaran.",
+
+      );
+
+    } finally {
+
+      setCheckingStatus(false);
+
+    }
+
+  }
 
   if (loading) {
 
@@ -594,8 +472,6 @@ setOrderId(orderResult.order.id);
     );
 
   }
-
-
 
   if (error && !concert) {
 
@@ -633,11 +509,7 @@ setOrderId(orderResult.order.id);
 
   }
 
-
-
   if (!concert || !selectedTicket) return null;
-
-
 
   return (
 
@@ -649,7 +521,7 @@ setOrderId(orderResult.order.id);
 
     >
 
-      <main className="mx-auto w-full max-w-5xl space-y-5">
+      <main className="mx-auto w-full min-w-0 max-w-5xl space-y-5">
 
         <Link
 
@@ -664,8 +536,6 @@ setOrderId(orderResult.order.id);
           Back
 
         </Link>
-
-
 
         <div>
 
@@ -737,8 +607,6 @@ setOrderId(orderResult.order.id);
 
           />
 
-
-
           <div className="min-w-0 flex-1">
 
             <span className="rounded bg-[#2F1E2A] px-2 py-1 text-[9px] font-bold uppercase text-[#FF6B81]">
@@ -747,23 +615,17 @@ setOrderId(orderResult.order.id);
 
             </span>
 
-
-
             <h2 className="mt-2 text-sm font-black text-white sm:text-base">
 
               {concert.name}
 
             </h2>
 
-
-
             <p className="mt-2 text-[11px] text-slate-400">
 
               {formatDate(concert.start_date)}
 
             </p>
-
-
 
             <p className="mt-1 text-[11px] text-slate-400">
 
@@ -781,8 +643,6 @@ setOrderId(orderResult.order.id);
 
         </section>
 
-
-
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
 
           <div className="space-y-4">
@@ -794,8 +654,6 @@ setOrderId(orderResult.order.id);
                 Ticket Selection
 
               </h2>
-
-
 
               <div className="rounded-lg border border-[#676D89] bg-[#20203A] p-3">
 
@@ -819,341 +677,189 @@ setOrderId(orderResult.order.id);
 
                   </div>
 
-
-
                   <p className="shrink-0 text-sm font-black text-[#B9A7FF]">
 
                     {money(Number(selectedTicket.price))}
-
                   </p>
-
                 </div>
-
-
 
                 <div className="mt-4 flex items-center justify-between">
-
                   <div>
-
                     <p className="text-xs font-bold text-white">Quantity</p>
-
                     <p className="mt-1 text-[10px] text-slate-400">
-
                       Maximum 10 tickets per order
-
                     </p>
-
                   </div>
-
-
 
                   <div className="flex items-center gap-3 rounded-lg border border-[#676D89] bg-[#161624] p-1">
-
                     <button
-
                       type="button"
-
                       onClick={() =>
-
                         setQuantity((value) => Math.max(1, value - 1))
-
                       }
-
                       className="h-8 w-8 rounded text-white hover:bg-white/10"
-
                     >
-
                       −
-
                     </button>
-
-
 
                     <span className="min-w-5 text-center text-xs font-black text-white">
-
                       {quantity}
-
                     </span>
 
-
-
                     <button
-
                       type="button"
-
                       onClick={() =>
-
                         setQuantity((value) => Math.min(10, value + 1))
-
                       }
-
-                      className="h-8 w-8 rounded text-white hover:bg-white/10"
-
-                    >
-
+                      className="h-8 w-8 rounded text-white hover:bg-white/10">
                       +
-
                     </button>
-
                   </div>
-
                 </div>
-
-
-
                 <p className="mt-3 text-right text-[10px] text-[#22D3EE]">
-
                   {selectedTicket.remaining ?? "—"} tickets remaining
-
                 </p>
-
               </div>
-
             </section>
-
-
-
-            
-
             <section className="rounded-xl border border-[#676D89] bg-[#161624] p-4">
-
               <h2 className="mb-4 border-l-4 border-[#22D3EE] pl-3 text-sm font-black text-white">
-
                 Attendee Information
-
               </h2>
 
+              <div className="space-y-4">
+                {attendees.map((attendee, index) => (
+                  <div
+                    key={index}
+                    className="space-y-3 rounded-lg border border-[#676D89] bg-[#20203A]/50 p-3"
+                  >
+                    <h3 className="text-xs font-black text-[#22D3EE]">
+                      Attendee {index + 1}
+                    </h3>
 
+                    <div>
+                      <label className="mb-1 block text-[11px] font-bold text-slate-300">
+                        Full Name <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        value={attendee.full_name}
+                        onChange={(e) =>
+                          setAttendees((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, full_name: e.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        placeholder="Enter attendee full name"
+                        className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
+                      />
+                    </div>
 
-              <div className="space-y-3">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-bold text-slate-300">
+                        Email Address <span className="text-slate-500">(Optional)</span>
+                      </label>
+                      <input
+                        type="email"
+                        value={attendee.email}
+                        onChange={(e) =>
+                          setAttendees((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, email: e.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        placeholder="Enter attendee email address"
+                        className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
+                      />
+                    </div>
 
-                <div>
-
-                  <label className="mb-1 block text-[11px] font-bold text-slate-300">
-
-                    Full Name
-
-                  </label>
-
-                  <input
-
-                    value={attendeeName}
-
-                    onChange={(e) => setAttendeeName(e.target.value)}
-
-                    placeholder="Enter your full name"
-
-                    className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
-
-                  />
-
-                </div>
-
-
-
-                <div>
-
-                  <label className="mb-1 block text-[11px] font-bold text-slate-300">
-
-                    Email Address
-
-                  </label>
-
-                  <input
-
-                    type="email"
-
-                    value={attendeeEmail}
-
-                    onChange={(e) => setAttendeeEmail(e.target.value)}
-
-                    placeholder="Enter your email address"
-
-                    className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
-
-                  />
-
-                </div>
-
-
-
-                <div>
-
-                  <label className="mb-1 block text-[11px] font-bold text-slate-300">
-
-                    Phone Number
-
-                  </label>
-
-                  <input
-
-                    type="tel"
-
-                    value={attendeePhone}
-
-                    onChange={(e) => setAttendeePhone(e.target.value)}
-
-                    placeholder="+62"
-
-                    className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
-
-                  />
-
-                </div>
-
-
+                    <div>
+                      <label className="mb-1 block text-[11px] font-bold text-slate-300">
+                        Phone Number <span className="text-slate-500">(Optional)</span>
+                      </label>
+                      <input
+                        type="tel"
+                        value={attendee.phone}
+                        onChange={(e) =>
+                          setAttendees((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, phone: e.target.value }
+                                : item,
+                            ),
+                          )
+                        }
+                        placeholder="+62"
+                        className="w-full rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-white outline-none focus:border-[#8B5CF6]"
+                      />
+                    </div>
+                  </div>
+                ))}
 
                 <p className="text-[10px] leading-relaxed text-amber-300/80">
-
-                  Payment details currently use the name and email registered
-
-                  on your LYNORA account.
-
+                  Enter the details of each ticket holder. If an email is left
+                  blank, the e-ticket will use the email registered on the
+                  purchaser's LYNORA account.
                 </p>
-
               </div>
-
             </section>
-
-
             <section className="rounded-xl border border-[#676D89] bg-[#161624] p-4">
-
               <h2 className="mb-3 border-l-4 border-[#22D3EE] pl-3 text-sm font-black text-white">
-
                 Voucher / Promo Code
-
               </h2>
-
-
-
               <div className="flex gap-2">
-
                 <input
-
                   disabled
-
                   placeholder="Voucher feature coming soon"
-
                   className="min-w-0 flex-1 rounded-lg border border-[#676D89] bg-[#20203A] px-3 py-2.5 text-xs text-slate-400"
-
                 />
-
-                <button
-
-                  type="button"
-
-                  disabled
-
-                  className="rounded-lg bg-[#5456DE]/50 px-4 text-xs font-bold text-white/60"
-
-                >
-
+                <button type="button" disabled className="rounded-lg bg-[#5456DE]/50 px-4 text-xs font-bold text-white/60" >
                   Apply
-
                 </button>
-
               </div>
-
             </section>
-
           </div>
-
-
-
-         
-
           <aside className="h-fit rounded-xl border border-[#676D89] bg-[#161624] p-4 lg:sticky lg:top-5">
-
             <h2 className="mb-4 border-l-4 border-[#22D3EE] pl-3 text-sm font-black text-white">
-
               Order Summary
-
             </h2>
-
-
-
             <div className="space-y-3 text-[11px]">
-
               <div className="flex justify-between gap-3 text-slate-300">
-
                 <span>
-
                   {selectedTicket.name} × {quantity}
-
                 </span>
-
                 <span className="shrink-0">{money(subtotal)}</span>
-
               </div>
-
-
-
               <div className="border-t border-[#676D89] pt-3">
-
                 <div className="flex justify-between text-sm font-black text-white">
-
                   <span>Total Payment</span>
-
                   <span className="text-[#B9A7FF]">
-
                     {money(subtotal)}
-
                   </span>
-
                 </div>
-
               </div>
-
             </div>
-
-
-
             <label className="mt-5 flex cursor-pointer items-start gap-2 text-[10px] leading-relaxed text-slate-400">
-
               <input
-
                 type="checkbox"
-
                 checked={agreed}
-
                 onChange={(e) => setAgreed(e.target.checked)}
-
                 className="mt-0.5 accent-[#8B5CF6]"
-
               />
-
               <span>
-
                 I have read and agree to the{" "}
-
-                <Link
-
-                  href={`/events/${concert.id}`}
-
-                  className="text-[#B9A7FF] underline"
-
-                >
-
-                  Terms & Conditions
-
-                </Link>{" "}
-
+                <Link href={`/events/${concert.id}`} className="text-[#B9A7FF] underline">Terms & Conditions</Link>{" "}
                 and LYNORA policies.
-
               </span>
-
             </label>
-
-
-
             {error && (
-
               <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-[11px] text-red-300">
-
                 {error}
-
               </p>
-
             )}
             <button
               type="button"
@@ -1163,7 +869,6 @@ setOrderId(orderResult.order.id);
             >
               {processing ? "Processing..." : "Continue to Payment →"}
             </button>
-
             {orderId !== null && (
               <button
                 type="button"
@@ -1174,35 +879,17 @@ setOrderId(orderResult.order.id);
                 {checkingStatus ? "Checking Payment..." : "Check Payment Status"}
               </button>
             )}
-
-
-
             <p className="mt-3 text-center text-[10px] text-slate-500">
-
               Secure payment powered by Midtrans.
-
             </p>
-
-
-
             <div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-slate-400">
-
               <span>🔒</span>
-
               Secure payment
-
               <span className="font-black text-cyan-400">midtrans</span>
-
             </div>
-
           </aside>
-
         </div>
-
       </main>
-
     </CustomerShell>
-
   );
-
 }

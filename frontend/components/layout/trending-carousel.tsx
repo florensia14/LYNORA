@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
@@ -142,7 +141,11 @@ function useVisibleCount() {
   return count;
 }
 
-export default function TrendingCarousel() {
+export default function TrendingCarousel({
+  onConcertClick,
+}: {
+  onConcertClick?: () => void;
+}) {
   const [events, setEvents] = useState<Concert[]>([]);
   const [position, setPosition] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -275,15 +278,21 @@ export default function TrendingCarousel() {
           const poster = getPoster(item.poster_url);
 
           return (
-            <Link
+            <button
               key={item.id}
-              href="/events"
+              type="button"
+              onClick={onConcertClick}
               aria-label={`View ${item.name} concert`}
               style={{
                 display: "block",
+                width: "100%",
                 minWidth: 0,
+                padding: 0,
+                border: "none",
+                background: "transparent",
                 color: "inherit",
-                textDecoration: "none",
+                textAlign: "left",
+                cursor: "pointer",
               }}
             >
               <article
@@ -447,7 +456,7 @@ export default function TrendingCarousel() {
                   </div>
                 </div>
               </article>
-            </Link>
+            </button>
           );
         })}
       </div>

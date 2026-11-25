@@ -1814,7 +1814,7 @@ useEffect(() => {
 
                   <button
                     type="button"
-                    onClick={() => router.push("/customer/tickets")}
+                    onClick={() => router.push(`/customer/tickets?ticketId=${nearestTicket.ticket_id}`)}
                     className={`${btnPrimary} mt-4 flex w-full items-center justify-center gap-2 !rounded-lg !py-2.5 !text-[13px] font-extrabold`}
                   >
                     <img

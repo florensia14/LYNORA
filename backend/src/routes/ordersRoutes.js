@@ -5,6 +5,7 @@ const {
   checkout,
   getMyOrders,
   getOrganizerOrders,
+  getOrganizerSalesDetail,
 } = require("../controllers/ordersController");
 
 const authenticateToken = require("../middlewares/authMiddleware");
@@ -22,6 +23,13 @@ router.get(
   authenticateToken,
   authorizeRoles("organizer"),
   getOrganizerOrders
+);
+
+router.get(
+  "/organizer-sales/:eventId",
+  authenticateToken,
+  authorizeRoles("organizer"),
+  getOrganizerSalesDetail
 );
 
 router.post(

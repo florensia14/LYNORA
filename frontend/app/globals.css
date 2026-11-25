@@ -870,10 +870,7 @@ footer a:hover {
   font-family: "Inter", sans-serif;
 }
 
-.cust-main {
-  min-height: 100vh;
-  margin-left: 205px;
-}
+.cust-main { min-height: 100vh; margin-left: var(--customer-sidebar-width, 205px); width: calc(100% - var(--customer-sidebar-width, 205px)); min-width: 0; transition: margin-left .25s ease, width .25s ease; }
 
 /* -------------------------------- Topbar ---------------------------------- */
 
@@ -2192,10 +2189,9 @@ footer a:hover {
   }
 }
 
+@media (max-width: 1023px) { .cust-main { margin-left: 0 !important; width: 100% !important; } }
+
 @media (max-width: 760px) {
-  .cust-main {
-    margin-left: 65px;
-  }
 
   .cust-topbar {
     padding: 0 14px;
@@ -2274,4 +2270,38 @@ footer a:hover {
 
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
+}
+
+/* LYNORA CUSTOMER SHELL: shared responsive layout */
+.cust-shell { --customer-sidebar-width: 205px; }
+.cust-shell[data-sidebar-collapsed="true"] { --customer-sidebar-width: 72px; }
+.cust-main, .cust-content { min-width: 0; max-width: 100%; }
+.cust-content > * { min-width: 0; max-width: 100%; }
+.cust-content img, .cust-content video, .cust-content canvas { max-width: 100%; }
+.cust-content input, .cust-content select, .cust-content textarea, .cust-content button { max-width: 100%; }
+.cust-content table { max-width: 100%; }
+.cust-content [class*="min-w-"] { min-width: 0; }
+
+@media (max-width: 1023px) {
+  .cust-shell { --customer-sidebar-width: 0px; }
+  .cust-main { margin-left: 0 !important; width: 100% !important; }
+}
+
+@media (max-width: 760px) {
+  .cust-content { padding: 16px 12px 36px !important; }
+  .cust-content [class*="grid-cols-"] { grid-template-columns: minmax(0, 1fr) !important; }
+  .cust-content .ticket-card-media { width: min(96px, 30vw) !important; flex-basis: min(96px, 30vw) !important; }
+  .cust-content .overflow-x-auto { max-width: 100%; }
+  .cust-content table { display: block; width: 100%; overflow-x: auto; }
+  .cust-content pre, .cust-content code { max-width: 100%; overflow-x: auto; }
+  .cust-content .flex { min-width: 0; }
+  .cust-content .flex > * { min-width: 0; }
+  .cust-content h1 { overflow-wrap: anywhere; }
+}
+
+@media (max-width: 480px) {
+  .cust-content { padding-right: 10px !important; padding-left: 10px !important; }
+  .cust-content [class*="p-5"], .cust-content [class*="p-6"] { padding: 12px !important; }
+  .cust-content [class*="gap-6"], .cust-content [class*="gap-8"] { gap: 12px !important; }
+  .cust-content button, .cust-content a { overflow-wrap: anywhere; }
 }

@@ -229,6 +229,11 @@ export function isInCity(concert: Concert, city: string): boolean {
 export type CheckoutItem = {
   ticket_category_id: number;
   quantity: number;
+  attendees: {
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+  }[];
 };
 
 export type CreateOrderResponse = {

@@ -1,12 +1,11 @@
 "use client";
-
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import TrendingCarousel from "@/components/layout/trending-carousel";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-
+import styles from "./LandingPage.module.css";
 const C = {
   bg: "#0B1020",
   section: "#111A36",
@@ -17,14 +16,12 @@ const C = {
   red: "#C30437",
   white: "#FFFFFF",
 };
-
 const GRADIENT_TEXT: CSSProperties = {
   background: "linear-gradient(90deg, #8B5CF6, #22D3EE)",
   backgroundClip: "text",
   WebkitBackgroundClip: "text",
   WebkitTextFillColor: "transparent",
 };
-
 // NOTE: rename file "r&b.jpg" -> "rnb.jpg" in /public/images/categories
 const categories = [
   { name: "POP", image: "pop.jpg", count: "210 EVENTS" },
@@ -40,18 +37,14 @@ const categories = [
   { name: "METAL", image: "metal.jpg", count: "92 EVENTS" },
   { name: "FESTIVAL", image: "festival.jpg", count: "130 EVENTS" },
 ];
-4
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
-
 const BACKEND_URL = API_BASE_URL.replace(/\/api\/?$/, "");
-
 type ConcertArtist = {
   id?: number;
   name: string;
   country?: string | null;
 };
-
 type Concert = {
   id: number;
   name: string;
@@ -64,13 +57,10 @@ type Concert = {
   start_date?: string | null;
   artists?: ConcertArtist[];
 };
-
 function formatConcertDate(date?: string | null) {
   if (!date) return "Date TBA";
-
   const parsedDate = new Date(date);
   if (Number.isNaN(parsedDate.getTime())) return "Date TBA";
-
   return parsedDate.toLocaleDateString("en-US", {
     weekday: "short",
     day: "numeric",
@@ -78,24 +68,19 @@ function formatConcertDate(date?: string | null) {
     year: "numeric",
   });
 }
-
 function formatConcertPrice(price?: string | number | null) {
   if (price === null || price === undefined || price === "") {
     return "Price TBA";
   }
-
   const numericPrice = Number(price);
   if (!Number.isFinite(numericPrice)) return "Price TBA";
-
   return `Rp${numericPrice.toLocaleString("id-ID")}`;
 }
-
 function getConcertPoster(poster?: string | null) {
   if (!poster) return null;
   if (poster.startsWith("http")) return poster;
   return `${BACKEND_URL}${poster.startsWith("/") ? "" : "/"}${poster}`;
 }
-
 const features = [
   {
     icon: "/icons/lock.png",
@@ -118,7 +103,6 @@ const features = [
     text: "One dashboard for discovering events, booking seats, and tracking every order you've made.",
   },
 ];
-
 const steps = [
   {
     number: "01",
@@ -141,7 +125,6 @@ const steps = [
     text: "Get your ticket and enjoy the moment.",
   },
 ];
-
 const faqs = [
   {
     question: "How do I buy a ticket on Lynora?",
@@ -177,7 +160,6 @@ const faqs = [
       "Any applicable booking fees will be displayed before you complete your payment.",
   },
 ];
-
 const contactDetails = [
   { icon: "/icons/mail.png", label: "EMAIL", value: "lynora@gmail.com" },
   { icon: "/icons/phone.png", label: "PHONE", value: "+62 21 1234 5678" },
@@ -189,10 +171,8 @@ const contactDetails = [
     value: "Mon - Fri, 09:00 - 18:00 WIB",
   },
 ];
-
 // TODO: make sure this date matches the real flash sale date
 const FLASH_SALE_DATE = new Date("2026-12-31T23:59:59+07:00").getTime();
-
 const contactInputStyle: CSSProperties = {
   width: "100%",
   height: 54,
@@ -204,7 +184,6 @@ const contactInputStyle: CSSProperties = {
   outline: "none",
   fontSize: 11,
 };
-
 const contactLabelStyle: CSSProperties = {
   display: "grid",
   gap: 8,
@@ -212,7 +191,6 @@ const contactLabelStyle: CSSProperties = {
   fontWeight: 800,
   letterSpacing: 1,
 };
-
 const concertInfoStyle: CSSProperties = {
   display: "flex",
   alignItems: "flex-start",
@@ -222,7 +200,6 @@ const concertInfoStyle: CSSProperties = {
   lineHeight: 1.5,
   marginBottom: 7,
 };
-
 const concertInfoIconStyle: CSSProperties = {
   width: 13,
   height: 13,
@@ -230,7 +207,6 @@ const concertInfoIconStyle: CSSProperties = {
   objectFit: "contain",
   marginTop: 1,
 };
-
 function InfoRow({
   icon,
   children,
@@ -247,13 +223,11 @@ function InfoRow({
     </div>
   );
 }
-
 type SectionHeadingProps = {
   eyebrow: string;
   title: ReactNode;
   description?: string;
 };
-
 function SectionHeading({ eyebrow, title, description }: SectionHeadingProps) {
   return (
     <div style={{ textAlign: "center", marginBottom: 38, width: "100%" }}>
@@ -267,7 +241,6 @@ function SectionHeading({ eyebrow, title, description }: SectionHeadingProps) {
       >
         {eyebrow}
       </span>
-
       <h2
         style={{
           fontSize: "clamp(26px, 4vw, 36px)",
@@ -278,7 +251,6 @@ function SectionHeading({ eyebrow, title, description }: SectionHeadingProps) {
       >
         {title}
       </h2>
-
       {description && (
         <p
           style={{
@@ -295,7 +267,6 @@ function SectionHeading({ eyebrow, title, description }: SectionHeadingProps) {
     </div>
   );
 }
-
 export default function LandingPage() {
   const [countdown, setCountdown] = useState({
     days: "00",
@@ -303,29 +274,29 @@ export default function LandingPage() {
     minutes: "00",
     seconds: "00",
   });
-
   const [featuredConcerts, setFeaturedConcerts] = useState<Concert[]>([]);
   const [concertLoading, setConcertLoading] = useState(true);
   const [concertError, setConcertError] = useState("");
-
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAuthPopup, setShowAuthPopup] = useState(false);
+  const [formStatus, setFormStatus] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   useEffect(() => {
     const controller = new AbortController();
-
     async function fetchFeaturedConcerts() {
       try {
         setConcertLoading(true);
         setConcertError("");
-
         const response = await fetch(`${API_BASE_URL}/events`, {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error("Failed to load concert data.");
-
         const result = await response.json();
         const eventData: Concert[] = Array.isArray(result)
           ? result
           : result.events || [];
-
         setFeaturedConcerts(eventData);
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
@@ -338,15 +309,12 @@ export default function LandingPage() {
         if (!controller.signal.aborted) setConcertLoading(false);
       }
     }
-
     fetchFeaturedConcerts();
     return () => controller.abort();
   }, []);
-
   useEffect(() => {
     const updateCountdown = () => {
       const difference = Math.max(0, FLASH_SALE_DATE - Date.now());
-
       setCountdown({
         days: String(Math.floor(difference / 86400000)).padStart(2, "0"),
         hours: String(Math.floor(difference / 3600000) % 24).padStart(2, "0"),
@@ -354,31 +322,47 @@ export default function LandingPage() {
         seconds: String(Math.floor(difference / 1000) % 60).padStart(2, "0"),
       });
     };
-
     updateCountdown();
     const timer = window.setInterval(updateCountdown, 1000);
     return () => window.clearInterval(timer);
   }, []);
-
-  // Contact form: opens the user's mail app. Replace with an API call when ready.
-  const handleContactSubmit = (event: FormEvent<HTMLFormElement>) => {
+  // EO application form: submits directly to Formspree.
+  const handleContactSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const subject = encodeURIComponent(String(data.get("subject") || ""));
-    const body = encodeURIComponent(
-      `${data.get("message") || ""}\n\nFrom: ${data.get("name") || ""} (${
-        data.get("email") || ""
-      })`
-    );
-    window.location.href = `mailto:lynora@gmail.com?subject=${subject}&body=${body}`;
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    setIsSubmitting(true);
+    setFormStatus(null);
+    try {
+      const response = await fetch("https://formspree.io/f/xeagvdwr", {
+        method: "POST",
+        body: formData,
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        throw new Error("Failed to submit your application.");
+      }
+      form.reset();
+      setFormStatus({
+        type: "success",
+        message: "Your application has been submitted successfully! We will review it soon.",
+      });
+    } catch {
+      setFormStatus({
+        type: "error",
+        message: "Something went wrong. Please try again later.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
-
   return (
     <>
       <Header />
-
       <div
-        className="landing-page"
+        className={styles.landingPage}
         style={{
           background: C.bg,
           color: C.white,
@@ -395,7 +379,6 @@ export default function LandingPage() {
             minHeight: 560,
             display: "flex",
             alignItems: "center",
-            // NOTE: rename "taylor hero.jpg" -> "taylor-hero.jpg"
             background: `
               linear-gradient(
                 90deg,
@@ -421,7 +404,6 @@ export default function LandingPage() {
                 THE PULSE OF LIVE MUSIC
               </span>
             </div>
-
             <h1
               style={{
                 fontSize: "clamp(42px, 6vw, 76px)",
@@ -435,7 +417,6 @@ export default function LandingPage() {
               <br />
               <span style={GRADIENT_TEXT}>Every Moment</span>
             </h1>
-
             <p
               style={{
                 color: "#D1D5E0",
@@ -449,7 +430,6 @@ export default function LandingPage() {
               Discover exclusive concerts, legendary venues, and the pure
               energy of the crowd.
             </p>
-
             <div
               style={{
                 display: "flex",
@@ -472,7 +452,6 @@ export default function LandingPage() {
               >
                 EXPLORE CONCERTS →
               </a>
-
               <a
                 href="#how-it-works"
                 style={{
@@ -490,7 +469,6 @@ export default function LandingPage() {
             </div>
           </div>
         </section>
-
         {/* STATISTICS */}
         <section
           className="stats-grid"
@@ -522,7 +500,6 @@ export default function LandingPage() {
             </div>
           ))}
         </section>
-
         {/* FLASH SALE */}
         <section
           style={{
@@ -560,7 +537,6 @@ export default function LandingPage() {
                 style={{ width: 42, height: 42, objectFit: "contain" }}
               />
             </div>
-
             <div>
               <h2 style={{ fontSize: 22, fontWeight: 900, margin: "0 0 7px" }}>
                 FLASH SALE COMING SOON
@@ -570,7 +546,6 @@ export default function LandingPage() {
               </p>
             </div>
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {[
               countdown.days,
@@ -597,14 +572,12 @@ export default function LandingPage() {
                 >
                   {value}
                 </div>
-
                 {index !== 3 && (
                   <span style={{ fontSize: 18, fontWeight: 900 }}>:</span>
                 )}
               </div>
             ))}
           </div>
-
           <Link
             href="/events"
             style={{
@@ -622,7 +595,6 @@ export default function LandingPage() {
             View Details
           </Link>
         </section>
-
         {/* WHY CHOOSE LYNORA */}
         <section id="features" style={{ padding: "75px 7%" }}>
           <div style={{ textAlign: "center", marginBottom: 38 }}>
@@ -636,7 +608,6 @@ export default function LandingPage() {
                 marginRight: 17,
               }}
             />
-
             <h2
               style={{
                 display: "inline",
@@ -647,7 +618,6 @@ export default function LandingPage() {
             >
               WHY CHOOSE <span style={GRADIENT_TEXT}>LYNORA</span>
             </h2>
-
             <p
               style={{
                 color: C.gray,
@@ -661,7 +631,6 @@ export default function LandingPage() {
               book, and enjoy live concerts all in one platform.
             </p>
           </div>
-
           <div
             className="features-grid"
             style={{
@@ -700,11 +669,9 @@ export default function LandingPage() {
                     style={{ width: 19, height: 19, objectFit: "contain" }}
                   />
                 </div>
-
                 <h3 style={{ fontSize: 13, fontWeight: 800, margin: "0 0 17px" }}>
                   {feature.title}
                 </h3>
-
                 <p
                   style={{
                     color: C.gray,
@@ -719,7 +686,6 @@ export default function LandingPage() {
             ))}
           </div>
         </section>
-
         {/* BROWSE BY CATEGORY */}
         <section style={{ padding: "75px 7%", background: C.section }}>
           <SectionHeading
@@ -727,7 +693,6 @@ export default function LandingPage() {
             title="Find Your Sound"
             description="From arena pop to underground beats every genre has a home here."
           />
-
           <div
             className="category-grid"
             style={{
@@ -772,7 +737,6 @@ export default function LandingPage() {
                     transform: "scale(1.18)",
                   }}
                 />
-
                 <div
                   style={{
                     position: "relative",
@@ -794,7 +758,6 @@ export default function LandingPage() {
             ))}
           </div>
         </section>
-
         {/* FEATURED CONCERTS */}
         <section id="events" style={{ padding: "75px 7%" }}>
           <SectionHeading
@@ -802,7 +765,6 @@ export default function LandingPage() {
             title="Your Next Front Row Awaits"
             description="Discover published concerts and find your next unforgettable live music experience."
           />
-
           {concertLoading ? (
             <p style={{ textAlign: "center", color: C.gray }}>
               Loading concerts...
@@ -832,18 +794,26 @@ export default function LandingPage() {
                 {featuredConcerts.slice(0, 3).map((concert, index) => {
                   const artist = concert.artists?.[0];
                   const poster = getConcertPoster(concert.poster_url);
-
                   return (
-                    <Link
+                    <div
                       key={concert.id}
-                      href="/events"
+                      role="button"
+                      tabIndex={0}
                       aria-label={`View ${concert.name} concert`}
+                      onClick={() => setShowAuthPopup(true)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setShowAuthPopup(true);
+                        }
+                      }}
                       style={{
                         display: "block",
                         minWidth: 0,
                         height: "100%",
                         color: "inherit",
                         textDecoration: "none",
+                        cursor: "pointer",
                       }}
                     >
                       <article
@@ -893,7 +863,6 @@ export default function LandingPage() {
                               No concert poster
                             </div>
                           )}
-
                           <span
                             style={{
                               position: "absolute",
@@ -911,7 +880,6 @@ export default function LandingPage() {
                             {formatConcertPrice(concert.starting_price)}
                           </span>
                         </div>
-
                         {/* DETAILS */}
                         <div
                           style={{
@@ -931,7 +899,6 @@ export default function LandingPage() {
                           >
                             FEATURED #{index + 1}
                           </span>
-
                           <h3
                             style={{
                               color: C.white,
@@ -943,7 +910,6 @@ export default function LandingPage() {
                           >
                             {concert.name}
                           </h3>
-
                           <p
                             style={{
                               color: C.purple,
@@ -954,7 +920,6 @@ export default function LandingPage() {
                           >
                             {concert.category_name || "Concert"}
                           </p>
-
                           <p
                             style={{
                               color: C.gray,
@@ -966,7 +931,6 @@ export default function LandingPage() {
                             {concert.description ||
                               "Enjoy an unforgettable live concert experience."}
                           </p>
-
                           <div
                             style={{
                               height: 1,
@@ -974,7 +938,6 @@ export default function LandingPage() {
                               marginBottom: 10,
                             }}
                           />
-
                           <InfoRow icon="/icons/calendar%20(1).png">
                             <strong>{formatConcertDate(concert.start_date)}</strong>
                           </InfoRow>
@@ -999,16 +962,16 @@ export default function LandingPage() {
                           </InfoRow>
                         </div>
                       </article>
-                    </Link>
+                    </div>
                   );
                 })}
               </div>
-
               <div
                 style={{ display: "flex", justifyContent: "center", marginTop: 30 }}
               >
-                <Link
-                  href="/events"
+                <button
+                  type="button"
+                  onClick={() => setShowAuthPopup(true)}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -1023,17 +986,16 @@ export default function LandingPage() {
                     fontSize: 12,
                     fontWeight: 800,
                     letterSpacing: ".5px",
-                    textDecoration: "none",
+                    cursor: "pointer",
                   }}
                 >
                   VIEW ALL CONCERTS{" "}
                   <span style={{ color: C.cyan, fontSize: 16 }}>→</span>
-                </Link>
+                </button>
               </div>
             </>
           )}
         </section>
-
         {/* TRENDING NOW */}
         <section
           id="trending"
@@ -1050,21 +1012,17 @@ export default function LandingPage() {
             >
               — TRENDING NOW !!
             </span>
-
             <h2 style={{ fontSize: 23, margin: "10px 0", letterSpacing: 1 }}>
               TOP 5 & Everyone&apos;s{" "}
               <span style={{ color: C.cyan }}>Losing It</span>
             </h2>
-
             <p style={{ color: C.gray, fontSize: 12, lineHeight: 1.7 }}>
               The lineup your whole feed can&apos;t shut up about. Seats are
               going fast — don&apos;t be the one who missed out.
             </p>
           </div>
-
-          <TrendingCarousel />
+          <TrendingCarousel onConcertClick={() => setShowAuthPopup(true)} />
         </section>
-
         {/* HOW IT WORKS */}
         <section
           id="how-it-works"
@@ -1075,7 +1033,6 @@ export default function LandingPage() {
             title="HOW IT WORKS."
             description="From discovering your favorite concert to stepping into the venue."
           />
-
           <div
             className="how-it-works-grid"
             style={{
@@ -1101,7 +1058,6 @@ export default function LandingPage() {
                 zIndex: 0,
               }}
             />
-
             {steps.map((step) => (
               <div
                 key={step.number}
@@ -1123,9 +1079,7 @@ export default function LandingPage() {
                 >
                   {step.number}
                 </div>
-
                 <h3 style={{ fontSize: 13 }}>{step.title}</h3>
-
                 <p style={{ color: C.gray, fontSize: 10, lineHeight: 1.7 }}>
                   {step.text}
                 </p>
@@ -1133,7 +1087,6 @@ export default function LandingPage() {
             ))}
           </div>
         </section>
-
         {/* FAQ */}
         <section id="faq" style={{ padding: "75px 7%", background: C.bg }}>
           <SectionHeading
@@ -1141,7 +1094,6 @@ export default function LandingPage() {
             title="FREQUENTLY ASKED QUESTIONS"
             description="Everything you need to know before booking your next concert."
           />
-
           <div
             style={{
               maxWidth: 850,
@@ -1176,7 +1128,6 @@ export default function LandingPage() {
                   }}
                 >
                   <span>{faq.question}</span>
-
                   <img
                     src="/icons/down-arrow.png"
                     alt=""
@@ -1185,7 +1136,6 @@ export default function LandingPage() {
                     style={{ objectFit: "contain", flexShrink: 0 }}
                   />
                 </summary>
-
                 <div style={{ padding: "0 22px 19px" }}>
                   <div
                     style={{
@@ -1209,7 +1159,6 @@ export default function LandingPage() {
             ))}
           </div>
         </section>
-
         {/* CONTACT */}
         <section
           id="contact"
@@ -1232,10 +1181,9 @@ export default function LandingPage() {
                   letterSpacing: 2,
                 }}
               >
-                GET IN TOUCH
+                BECOME AN EVENT ORGANIZER
               </span>
             </div>
-
             <h2
               style={{
                 fontSize: 30,
@@ -1244,9 +1192,8 @@ export default function LandingPage() {
                 margin: "5px 0",
               }}
             >
-              LET&apos;S CONNECT
+              LET&apos;S BUILD EVENTS TOGETHER
             </h2>
-
             <p
               style={{
                 color: C.white,
@@ -1256,10 +1203,9 @@ export default function LandingPage() {
                 marginBottom: 22,
               }}
             >
-              Have a question or need help with your ticket? We&apos;re here to
-              help you experience every moment.
+              Ready to bring unforgettable live music experiences to life? Apply
+              to become a LYNORA Event Organizer and share your events with music lovers.
             </p>
-
             {contactDetails.map((item) => (
               <div
                 key={item.label}
@@ -1287,7 +1233,6 @@ export default function LandingPage() {
                     style={{ width: 24, height: 24, objectFit: "contain" }}
                   />
                 </div>
-
                 <div>
                   <div
                     style={{
@@ -1307,7 +1252,6 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
-
           <form
             onSubmit={handleContactSubmit}
             style={{
@@ -1319,45 +1263,52 @@ export default function LandingPage() {
             }}
           >
             <label style={contactLabelStyle}>
-              NAME
+              ORGANIZATION NAME *
               <input
-                name="name"
+                name="organization_name"
                 type="text"
                 required
-                placeholder="Your name"
+                placeholder="Enter organization name"
                 style={contactInputStyle}
               />
             </label>
-
             <label style={contactLabelStyle}>
-              EMAIL
+              APPLICANT NAME *
+              <input
+                name="applicant_name"
+                type="text"
+                required
+                placeholder="Enter your full name"
+                style={contactInputStyle}
+              />
+            </label>
+            <label style={contactLabelStyle}>
+              EMAIL *
               <input
                 name="email"
                 type="email"
                 required
-                placeholder="Your email"
+                placeholder="Enter your email address"
                 style={contactInputStyle}
               />
             </label>
-
-            <label style={{ ...contactLabelStyle, gridColumn: "1 / -1" }}>
-              SUBJECT
+            <label style={contactLabelStyle}>
+              PHONE NUMBER *
               <input
-                name="subject"
-                type="text"
+                name="phone_number"
+                type="tel"
                 required
-                placeholder="What can we help with ??"
+                placeholder="Enter your phone number"
                 style={contactInputStyle}
               />
             </label>
-
             <label style={{ ...contactLabelStyle, gridColumn: "1 / -1" }}>
-              MESSAGE
+              ORGANIZATION DESCRIPTION *
               <textarea
-                name="message"
+                name="organization_description"
                 rows={7}
                 required
-                placeholder="Write your message..."
+                placeholder="Tell us about your organization and the events you organize..."
                 style={{
                   ...contactInputStyle,
                   height: "auto",
@@ -1367,7 +1318,20 @@ export default function LandingPage() {
                 }}
               />
             </label>
-
+            {formStatus && (
+              <p
+                role="status"
+                style={{
+                  gridColumn: "1 / -1",
+                  color: formStatus.type === "success" ? C.cyan : "#FF8585",
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  margin: 0,
+                }}
+              >
+                {formStatus.message}
+              </p>
+            )}
             <div
               style={{
                 gridColumn: "1 / -1",
@@ -1377,6 +1341,7 @@ export default function LandingPage() {
             >
               <button
                 type="submit"
+                disabled={isSubmitting}
                 style={{
                   padding: "13px 21px",
                   background: C.purple,
@@ -1386,97 +1351,102 @@ export default function LandingPage() {
                   fontSize: 12,
                   fontWeight: 800,
                   letterSpacing: 1,
-                  cursor: "pointer",
+                  cursor: isSubmitting ? "not-allowed" : "pointer",
+                  opacity: isSubmitting ? 0.7 : 1,
                 }}
               >
-                SEND MESSAGE
+                {isSubmitting ? "SUBMITTING..." : "SUBMIT APPLICATION"}
               </button>
             </div>
           </form>
         </section>
-
-        <style jsx global>{`
-          html {
-            scroll-behavior: smooth;
-            scroll-padding-top: 100px; /* header is ~92px tall */
-          }
-          details summary::-webkit-details-marker {
-            display: none;
-          }
-          details[open] summary img {
-            transform: rotate(180deg);
-          }
-          .landing-page {
-            width: 100%;
-          }
-          .landing-page #events {
-            padding-top: 48px;
-            padding-bottom: 28px;
-          }
-          .landing-page #trending {
-            padding-top: 28px;
-          }
-          @media (max-width: 900px) {
-            .landing-page section {
-              padding-left: 5% !important;
-              padding-right: 5% !important;
-            }
-            .landing-page .stats-grid,
-            .landing-page .features-grid {
-              grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-            }
-            .landing-page .category-grid {
-              grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-            }
-            .landing-page .featured-grid {
-              grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-            }
-            .landing-page .how-it-works-grid {
-              grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-              row-gap: 30px !important;
-            }
-            .landing-page #contact {
-              grid-template-columns: 1fr !important;
-              gap: 35px !important;
-            }
-          }
-          @media (max-width: 600px) {
-            .landing-page section {
-              padding-top: 48px !important;
-              padding-bottom: 48px !important;
-            }
-            .landing-page .features-grid {
-              grid-template-columns: 1fr !important;
-            }
-            .landing-page .category-grid {
-              grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-              gap: 10px !important;
-            }
-            .landing-page .featured-grid {
-              grid-template-columns: 1fr !important;
-              max-width: 430px !important;
-            }
-            .landing-page .steps-connector {
-              display: none !important;
-            }
-            .landing-page #contact form {
-              grid-template-columns: 1fr !important;
-            }
-            .landing-page #contact form label {
-              grid-column: 1 / -1 !important;
-            }
-            .landing-page #faq summary {
-              padding: 15px !important;
-            }
-            .landing-page #home {
-              min-height: 520px !important;
-              padding-top: 55px !important;
-              padding-bottom: 55px !important;
-            }
-          }
-        `}</style>
       </div>
-
+      {showAuthPopup && (
+        <div
+          role="presentation"
+          onClick={() => setShowAuthPopup(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+            background: "rgba(3, 6, 18, .78)",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lynora-auth-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 440,
+              padding: "38px 30px 30px",
+              border: "1px solid rgba(139, 92, 246, .75)",
+              borderRadius: 16,
+              background: "linear-gradient(145deg, #202A4F 0%, #111A36 58%, #0B1020 100%)",
+              boxShadow: "0 24px 80px rgba(0, 0, 0, .55), 0 0 35px rgba(139, 92, 246, .16)",
+              textAlign: "center",
+              color: C.white,
+            }}
+          >
+            <h2
+              id="lynora-auth-title"
+              style={{
+                margin: 0,
+                fontSize: 34,
+                lineHeight: 1.2,
+                fontWeight: 900,
+                letterSpacing: 3,
+                ...GRADIENT_TEXT,
+              }}
+            >
+              LYNORA
+            </h2>
+            <div
+              style={{
+                width: 58,
+                height: 3,
+                margin: "18px auto 20px",
+                borderRadius: 10,
+                background: "linear-gradient(90deg, #8B5CF6, #22D3EE)",
+              }}
+            />
+            <p style={{ margin: "0 auto 26px", maxWidth: 340, color: "#D1D5E0", fontSize: 14, lineHeight: 1.8 }}>
+              Join the rhythm and discover unforgettable live music experiences. Please{" "}
+              <Link href="/login" style={{ color: C.cyan, fontWeight: 800, textDecoration: "underline", textUnderlineOffset: 4 }}>
+                login
+              </Link>{" "}or{" "}
+              <Link href="/register" style={{ color: C.cyan, fontWeight: 800, textDecoration: "underline", textUnderlineOffset: 4 }}>
+                signup
+              </Link>{" "}to continue.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowAuthPopup(false)}
+              style={{
+                minWidth: 130,
+                padding: "11px 28px",
+                border: "1px solid rgba(34, 211, 238, .65)",
+                borderRadius: 7,
+                background: "linear-gradient(90deg, #8B5CF6, #5456DE)",
+                color: C.white,
+                fontSize: 13,
+                fontWeight: 900,
+                letterSpacing: 1,
+                cursor: "pointer",
+                boxShadow: "0 6px 20px rgba(84, 86, 222, .28)",
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
       <Footer />
     </>
   );

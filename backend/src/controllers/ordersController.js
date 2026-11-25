@@ -18,6 +18,7 @@ async function checkout(req, res) {
     }
 
     const quantities = new Map();
+    const attendeesByCategory = new Map();
 
     for (const item of items) {
       const ticketId = Number(item.ticket_category_id);
@@ -38,6 +39,33 @@ async function checkout(req, res) {
         ticketId,
         (quantities.get(ticketId) || 0) + quantity
       );
+
+      // Data attendee bersifat opsional untuk kompatibilitas request lama.
+      // Jika dikirim, jumlahnya wajib sama dengan quantity item tersebut.
+      if (item.attendees !== undefined) {
+        if (!Array.isArray(item.attendees) || item.attendees.length !== quantity) {
+          return res.status(400).json({
+            success: false,
+            message: "Jumlah data attendee harus sama dengan jumlah tiket.",
+          });
+        }
+        const normalizedAttendees = item.attendees.map((attendee) => ({
+          name: String(attendee?.name || attendee?.full_name || "").trim(),
+          email: attendee?.email ? String(attendee.email).trim().toLowerCase() : null,
+          phone: attendee?.phone ? String(attendee.phone).trim() : null,
+        }));
+        if (normalizedAttendees.some((attendee) => !attendee.name)) {
+          return res.status(400).json({ success: false, message: "Nama setiap attendee wajib diisi." });
+        }
+        if (normalizedAttendees.some((attendee) => attendee.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(attendee.email))) {
+          return res.status(400).json({ success: false, message: "Format email attendee tidak valid." });
+        }
+        if (attendeesByCategory.has(ticketId)) {
+          attendeesByCategory.get(ticketId).push(...normalizedAttendees);
+        } else {
+          attendeesByCategory.set(ticketId, normalizedAttendees);
+        }
+      }
     }
 
     await connection.beginTransaction();
@@ -132,7 +160,7 @@ async function checkout(req, res) {
     const orderId = orderResult.insertId;
 
     for (const item of orderItems) {
-      await connection.execute(
+      const [orderItemResult] = await connection.execute(
         `INSERT INTO order_items
           (order_id, ticket_category_id, quantity, price_at_purchase, subtotal)
         VALUES (?, ?, ?, ?, ?)`,
@@ -144,6 +172,18 @@ async function checkout(req, res) {
           item.subtotal,
         ]
       );
+
+      const attendees = attendeesByCategory.get(item.ticketId) || [];
+      if (attendees.length) {
+        for (const attendee of attendees) {
+          await connection.execute(
+            `INSERT INTO ticket_attendees
+              (order_item_id, full_name, email, phone)
+             VALUES (?, ?, ?, ?)`,
+            [orderItemResult.insertId, attendee.name, attendee.email, attendee.phone]
+          );
+        }
+      }
     }
 
     await connection.commit();
@@ -409,8 +449,191 @@ async function getOrganizerOrders(req, res) {
   }
 }
 
+
+// GET /api/orders/organizer-sales/:eventId
+// Ringkasan penjualan khusus satu konser. Revenue dihitung dari subtotal order_items,
+// bukan orders.total_amount, karena satu order dapat berisi beberapa konser.
+async function getOrganizerSalesDetail(req, res) {
+  try {
+    const organizerId = Number(req.user?.id);
+    const eventId = Number(req.params.eventId);
+
+    if (!organizerId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    if (!Number.isSafeInteger(eventId) || eventId <= 0) {
+      return res.status(400).json({ success: false, message: "ID konser tidak valid." });
+    }
+
+    const [eventRows] = await db.query(
+      `SELECT e.id, e.name, e.description, e.poster_url, e.start_date, e.end_date,
+              e.status, v.name AS venue_name, v.address AS venue_address,
+              c.name AS category_name
+       FROM events e
+       LEFT JOIN venues v ON v.id = e.venue_id
+       LEFT JOIN categories c ON c.id = e.category_id
+       WHERE e.id = ? AND e.organizer_id = ? LIMIT 1`,
+      [eventId, organizerId]
+    );
+
+    if (!eventRows.length) {
+      return res.status(404).json({ success: false, message: "Konser tidak ditemukan atau bukan milik organizer ini." });
+    }
+
+    const [summaryRows] = await db.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN o.status = 'paid' THEN oi.quantity ELSE 0 END), 0) AS tickets_sold,
+         COALESCE(SUM(CASE WHEN o.status = 'paid' THEN oi.subtotal ELSE 0 END), 0) AS gross_revenue,
+         COUNT(DISTINCT CASE WHEN o.status = 'paid' THEN o.id END) AS paid_orders,
+         COALESCE(SUM(CASE WHEN o.status = 'refunded' OR p.status = 'refunded' THEN oi.subtotal ELSE 0 END), 0) AS refunded_amount,
+         COUNT(DISTINCT CASE WHEN o.status = 'refunded' OR p.status = 'refunded' THEN o.id END) AS refunded_orders
+       FROM ticket_categories tc
+       LEFT JOIN order_items oi ON oi.ticket_category_id = tc.id
+       LEFT JOIN orders o ON o.id = oi.order_id
+       LEFT JOIN payments p ON p.order_id = o.id
+       WHERE tc.event_id = ?`,
+      [eventId]
+    );
+
+    const [categoryRows] = await db.query(
+      `SELECT tc.id, tc.name, tc.price, tc.quota,
+         COALESCE(SUM(CASE WHEN o.status = 'paid' THEN oi.quantity ELSE 0 END), 0) AS sold,
+         COALESCE(SUM(CASE WHEN o.status = 'paid' THEN oi.subtotal ELSE 0 END), 0) AS revenue
+       FROM ticket_categories tc
+       LEFT JOIN order_items oi ON oi.ticket_category_id = tc.id
+       LEFT JOIN orders o ON o.id = oi.order_id
+       WHERE tc.event_id = ?
+       GROUP BY tc.id, tc.name, tc.price, tc.quota
+       ORDER BY tc.price ASC, tc.id ASC`,
+      [eventId]
+    );
+
+    const [trendRows] = await db.query(
+      `SELECT DATE(o.created_at) AS sale_date,
+         COALESCE(SUM(oi.quantity), 0) AS tickets,
+         COALESCE(SUM(oi.subtotal), 0) AS revenue
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+       WHERE tc.event_id = ? AND o.status = 'paid'
+         AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+       GROUP BY DATE(o.created_at)
+       ORDER BY sale_date ASC`,
+      [eventId]
+    );
+
+    const [paymentRows] = await db.query(
+      `SELECT COALESCE(p.payment_type, 'unknown') AS payment_type,
+         COUNT(DISTINCT o.id) AS orders_count,
+         COALESCE(SUM(oi.subtotal), 0) AS amount
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+       LEFT JOIN payments p ON p.order_id = o.id
+       WHERE tc.event_id = ? AND o.status = 'paid'
+       GROUP BY p.payment_type
+       ORDER BY amount DESC`,
+      [eventId]
+    );
+
+    const [attendanceRows] = await db.query(
+      `SELECT COUNT(t.id) AS total_tickets,
+         COALESCE(SUM(t.status = 'used'), 0) AS checked_in,
+         COALESCE(SUM(t.status = 'valid'), 0) AS not_checked_in
+       FROM tickets t
+       JOIN order_items oi ON oi.id = t.order_item_id
+       JOIN orders o ON o.id = oi.order_id AND o.status = 'paid'
+       JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+       WHERE tc.event_id = ? AND t.status IN ('valid', 'used')`,
+      [eventId]
+    );
+
+    const [transactionRows] = await db.query(
+      `SELECT o.id, o.order_code, o.status, o.created_at,
+         u.name AS customer_name, u.email AS customer_email,
+         COALESCE(SUM(oi.quantity), 0) AS quantity,
+         COALESCE(SUM(oi.subtotal), 0) AS event_amount,
+         (SELECT p.payment_type FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS payment_type,
+         (SELECT p.status FROM payments p WHERE p.order_id = o.id ORDER BY p.id DESC LIMIT 1) AS payment_status
+       FROM orders o
+       JOIN users u ON u.id = o.customer_id
+       JOIN order_items oi ON oi.order_id = o.id
+       JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+       WHERE tc.event_id = ?
+       GROUP BY o.id, o.order_code, o.status, o.created_at, u.name, u.email
+       ORDER BY o.created_at DESC
+       LIMIT 10`,
+      [eventId]
+    );
+
+    const summary = summaryRows[0] || {};
+    const attendance = attendanceRows[0] || {};
+    const ticketsSold = Number(summary.tickets_sold || 0);
+    const grossRevenue = Number(summary.gross_revenue || 0);
+    const paidOrders = Number(summary.paid_orders || 0);
+    const checkedIn = Number(attendance.checked_in || 0);
+    const totalTickets = Number(attendance.total_tickets || 0);
+
+    const paymentLabels = {
+      bank_transfer: "Bank Transfer", gopay: "GoPay", qris: "QRIS",
+      credit_card: "Credit Card", shopeepay: "ShopeePay", cstore: "Convenience Store",
+      echannel: "Mandiri Bill", akulaku: "Akulaku",
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        event: eventRows[0],
+        summary: {
+          tickets_sold: ticketsSold,
+          gross_revenue: grossRevenue,
+          paid_orders: paidOrders,
+          average_order_value: paidOrders ? grossRevenue / paidOrders : 0,
+          refunded_amount: Number(summary.refunded_amount || 0),
+          refunded_orders: Number(summary.refunded_orders || 0),
+        },
+        categories: categoryRows.map((row) => ({
+          ...row,
+          price: Number(row.price || 0),
+          quota: Number(row.quota || 0),
+          sold: Number(row.sold || 0),
+          remaining: Math.max(0, Number(row.quota || 0) - Number(row.sold || 0)),
+          revenue: Number(row.revenue || 0),
+        })),
+        trend: trendRows.map((row) => ({
+          date: row.sale_date,
+          tickets: Number(row.tickets || 0),
+          revenue: Number(row.revenue || 0),
+        })),
+        payments: paymentRows.map((row) => ({
+          payment_type: row.payment_type,
+          payment_label: paymentLabels[row.payment_type] || row.payment_type,
+          orders: Number(row.orders_count || 0),
+          amount: Number(row.amount || 0),
+        })),
+        attendance: {
+          total_tickets: totalTickets,
+          checked_in: checkedIn,
+          not_checked_in: Number(attendance.not_checked_in || 0),
+          progress: totalTickets ? Math.round((checkedIn / totalTickets) * 1000) / 10 : 0,
+        },
+        transactions: transactionRows.map((row) => ({
+          ...row,
+          quantity: Number(row.quantity || 0),
+          event_amount: Number(row.event_amount || 0),
+          payment_method: paymentLabels[row.payment_type] || row.payment_type || null,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Get Organizer Sales Detail Error:", error);
+    return res.status(500).json({ success: false, message: "Gagal mengambil detail sales konser." });
+  }
+}
+
 module.exports = {
   checkout,
   getMyOrders,
   getOrganizerOrders,
+  getOrganizerSalesDetail,
 };

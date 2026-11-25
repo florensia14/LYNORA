@@ -101,7 +101,13 @@ function Field({
 
 // MAIN TICKET CARD
 
-function MainTicketCard({ ticket }: { ticket: ApiMyTicket }) {
+function MainTicketCard({
+  ticket,
+  onDownload,
+}: {
+  ticket: ApiMyTicket;
+  onDownload: () => void;
+}) {
   return (
     <article className="overflow-hidden rounded-xl border border-[#676D89] bg-[#171B26]">
       {/* Status bar */}
@@ -191,9 +197,8 @@ function MainTicketCard({ ticket }: { ticket: ApiMyTicket }) {
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
         <button
           type="button"
-          disabled
-          title="Fitur PDF akan tersedia setelah endpoint e-ticket dibuat"
-          className="flex cursor-not-allowed items-center gap-1.5 rounded-md bg-[#5456DE]/60 px-3 py-2 text-xs font-semibold text-white/70"
+          onClick={onDownload}
+          className="flex items-center gap-1.5 rounded-md bg-[#5456DE] px-3 py-2 text-xs font-semibold text-white transition hover:brightness-110"
         >
           <img
             src="/icons/direct-download.png"
@@ -203,13 +208,6 @@ function MainTicketCard({ ticket }: { ticket: ApiMyTicket }) {
           Download E-Ticket (PDF)
         </button>
 
-        <button
-          type="button"
-          disabled
-          className="cursor-not-allowed rounded-md border border-[#676D89] bg-[#0C1122] px-3 py-2 text-xs font-semibold text-white/50"
-        >
-          Add to Wallet
-        </button>
       </div>
 
       <div className="flex w-full items-center gap-2 border-t border-[#676D89]/60 px-4 py-3 text-xs font-medium text-white">
@@ -269,8 +267,12 @@ function QrCard({ ticket }: { ticket: ApiMyTicket }) {
 
 function OtherTicketRow({
   tickets,
+  onOpenTicket,
+  selectedTicketId,
 }: {
   tickets: ApiMyTicket[];
+  onOpenTicket: (ticketId: ApiMyTicket["ticket_id"]) => void;
+  selectedTicketId: ApiMyTicket["ticket_id"];
 }) {
   return (
     <div className="space-y-4">
@@ -320,9 +322,14 @@ function OtherTicketRow({
               {ticket.order_code}
             </span>
 
-            <span className="text-xs font-semibold text-[#AAB0C5]">
-              {ticket.category_name}
-            </span>
+            <button
+              type="button"
+              onClick={() => onOpenTicket(ticket.ticket_id)}
+              aria-pressed={String(ticket.ticket_id) === String(selectedTicketId)}
+              className="rounded-md bg-[#5456DE] px-4 py-2 text-xs font-semibold text-white transition hover:brightness-110"
+            >
+              Open Ticket
+            </button>
           </div>
         </article>
       ))}
@@ -475,6 +482,7 @@ export default function MyTicketsPage() {
   const [tickets, setTickets] = useState<ApiMyTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedTicketId, setSelectedTicketId] = useState<ApiMyTicket["ticket_id"] | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -488,6 +496,26 @@ export default function MyTicketsPage() {
 
         if (isMounted) {
           setTickets(result);
+
+          // If another page opened My Tickets with ?ticketId=..., select
+          // that exact ticket. Otherwise keep the normal first-active default.
+          const params = new URLSearchParams(window.location.search);
+          const requestedTicketId = params.get("ticketId");
+          const requestedTicket = requestedTicketId
+            ? result.find(
+                (ticket) =>
+                  String(ticket.ticket_id) === String(requestedTicketId) &&
+                  ticket.ticket_status === "valid"
+              )
+            : undefined;
+
+          const firstActiveTicket = result.find(
+            (ticket) => ticket.ticket_status === "valid"
+          );
+
+          setSelectedTicketId(
+            requestedTicket?.ticket_id ?? firstActiveTicket?.ticket_id ?? null
+          );
         }
       } catch (err) {
         if (isMounted) {
@@ -525,8 +553,28 @@ export default function MyTicketsPage() {
       ticket.ticket_status === "refunded"
   );
 
-  const mainTicket = activeTickets[0];
-  const otherActiveTickets = activeTickets.slice(1);
+  const mainTicket =
+    activeTickets.find(
+      (ticket) => String(ticket.ticket_id) === String(selectedTicketId)
+    ) ?? activeTickets[0];
+
+  const otherActiveTickets = activeTickets.filter(
+    (ticket) => String(ticket.ticket_id) !== String(mainTicket?.ticket_id)
+  );
+
+  const handleOpenTicket = (ticketId: ApiMyTicket["ticket_id"]) => {
+    setSelectedTicketId(ticketId);
+    requestAnimationFrame(() => {
+      document.getElementById("main-ticket-section")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  };
+
+  const handleDownloadTicket = () => {
+    window.print();
+  };
 
   return (
     <CustomerShell
@@ -540,7 +588,7 @@ export default function MyTicketsPage() {
           <p
             className={`${GRADIENT} bg-clip-text text-xs font-bold tracking-wide text-transparent`}
           >
-            LYNORA PASSWORD
+            LYNORA E-TICKETS
           </p>
 
           <h1 className="mt-1 text-3xl font-extrabold text-white">
@@ -610,16 +658,109 @@ export default function MyTicketsPage() {
             </div>
           ) : (
             <>
-              <div className="mt-6 grid gap-4 lg:grid-cols-[1.35fr_1fr]">
-                <MainTicketCard ticket={mainTicket} />
-                <QrCard ticket={mainTicket} />
-              </div>
+              {mainTicket && (
+                <>
+                  <div
+                    id="main-ticket-section"
+                    className="mt-6 grid scroll-mt-6 gap-4 lg:grid-cols-[1.35fr_1fr] print:hidden"
+                  >
+                    <MainTicketCard
+                      ticket={mainTicket}
+                      onDownload={handleDownloadTicket}
+                    />
+                    <QrCard ticket={mainTicket} />
+                  </div>
+
+                  <div id="ticket-print-area">
+                    <div className="ticket-print-header">
+                      <div>
+                        <p className="ticket-print-brand">LYNORA</p>
+                        <p className="ticket-print-subtitle">OFFICIAL E-TICKET</p>
+                      </div>
+                      <span className="ticket-print-status">{formatStatus(mainTicket.ticket_status)}</span>
+                    </div>
+
+                    <h1 className="ticket-print-event">{mainTicket.event_name}</h1>
+                    {mainTicket.poster_url && (
+                      <img
+                        src={mainTicket.poster_url}
+                        alt={mainTicket.event_name}
+                        className="ticket-print-poster"
+                      />
+                    )}
+
+                    <div className="ticket-print-content">
+                      <div className="ticket-print-details">
+                        <div><span>Date &amp; Time</span><strong>{formatDateTime(mainTicket.start_date)}</strong></div>
+                        <div><span>Ticket No.</span><strong>{mainTicket.ticket_code}</strong></div>
+                        <div><span>Category</span><strong>{mainTicket.category_name}</strong></div>
+                        <div><span>Venue</span><strong>{mainTicket.venue_name || "-"}</strong></div>
+                        <div><span>Venue Address</span><strong>{mainTicket.venue_address || "-"}</strong></div>
+                        <div><span>Booking ID</span><strong>{mainTicket.order_code}</strong></div>
+                      </div>
+
+                      <div className="ticket-print-qr">
+                        <QRCodeSVG
+                          value={mainTicket.ticket_code}
+                          size={190}
+                          level="H"
+                          bgColor="#FFFFFF"
+                          fgColor="#0B1020"
+                          marginSize={2}
+                        />
+                        <strong>{mainTicket.ticket_code}</strong>
+                        <span>Present this QR code at the event check-in.</span>
+                      </div>
+                    </div>
+                    <p className="ticket-print-footer">Keep this ticket and its QR code private. Each ticket can only be validated once.</p>
+                  </div>
+
+                  <style jsx global>{`
+                    #ticket-print-area { display: none; }
+                    @media print {
+                      @page { size: A4; margin: 14mm; }
+                      body * { visibility: hidden !important; }
+                      #ticket-print-area,
+                      #ticket-print-area * { visibility: visible !important; }
+                      #ticket-print-area {
+                        display: block !important;
+                        position: absolute !important;
+                        inset: 0 auto auto 0 !important;
+                        width: 100% !important;
+                        padding: 8mm !important;
+                        color: #111827 !important;
+                        background: #ffffff !important;
+                        font-family: Arial, sans-serif !important;
+                      }
+                      .ticket-print-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #8B5CF6; padding-bottom: 12px; }
+                      .ticket-print-brand { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 2px; color: #764ED1; }
+                      .ticket-print-subtitle { margin: 2px 0 0; font-size: 10px; letter-spacing: 2px; color: #64748b; }
+                      .ticket-print-status { padding: 7px 12px; border-radius: 20px; background: #dcfce7; color: #166534; font-size: 11px; font-weight: 700; }
+                      .ticket-print-event { margin: 22px 0 14px; font-size: 25px; font-weight: 800; color: #111827; }
+                      .ticket-print-poster { width: 100%; max-height: 210px; object-fit: cover; border-radius: 10px; margin-bottom: 20px; }
+                      .ticket-print-content { display: grid; grid-template-columns: 1fr 220px; gap: 24px; align-items: center; }
+                      .ticket-print-details { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 12px; }
+                      .ticket-print-details div { min-width: 0; }
+                      .ticket-print-details span { display: block; margin-bottom: 5px; font-size: 10px; color: #64748b; }
+                      .ticket-print-details strong { display: block; overflow-wrap: anywhere; font-size: 12px; color: #111827; }
+                      .ticket-print-qr { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 12px; border: 1px solid #d1d5db; border-radius: 12px; text-align: center; }
+                      .ticket-print-qr strong { font-size: 10px; overflow-wrap: anywhere; color: #111827; }
+                      .ticket-print-qr span { font-size: 9px; color: #64748b; }
+                      .ticket-print-footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #d1d5db; font-size: 9px; color: #64748b; }
+                    }
+                  `}</style>
+                </>
+              )}
 
               {otherActiveTickets.length > 0 && (
                 <section className="mt-10 space-y-4">
                   <SectionTitle>Other Active Tickets</SectionTitle>
 
-                  <OtherTicketRow tickets={otherActiveTickets} />
+                  <OtherTicketRow
+                    tickets={otherActiveTickets}
+                    onOpenTicket={handleOpenTicket}
+                    selectedTicketId={mainTicket.ticket_id}
+                  />
                 </section>
               )}
             </>

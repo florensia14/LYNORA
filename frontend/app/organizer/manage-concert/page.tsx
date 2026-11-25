@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import AddConcertModal from "@/components/organizer/AddConcertModal";
+import OrganizerPageHero from "@/components/layout/OrganizerPageHero";
 
 const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api")
   .replace(/\/api\/?$/, "").replace(/\/$/, "");
@@ -744,41 +745,29 @@ function ManageConcertContent() {
 
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-4">
-      {/* HERO BANNER */}
-      <section className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[linear-gradient(120deg,#2A1B5C_0%,#6D28D9_50%,#DB2777_100%)]">
-        <img
-          src="/images/hero/ao.jpg"
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-          onError={(e) => {
-            e.currentTarget.onerror = null;
-            e.currentTarget.style.display = "none";
-          }}
-        />
-        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(11,17,34,0.85)_0%,rgba(11,17,34,0.35)_60%,rgba(11,17,34,0.1)_100%)]" />
-
-        <div className="relative flex min-h-[130px] flex-col justify-end gap-3 p-4 sm:min-h-[150px] sm:flex-row sm:items-end sm:justify-between sm:p-6">
-          <div>
-            <h2 className="text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
-              Manage{" "}
-              <span className="bg-[linear-gradient(90deg,#A78BFA,#22D3EE)] bg-clip-text text-transparent">
-                Concerts
-              </span>
-            </h2>
-            <p className="mt-1 text-[11px] text-slate-200 sm:text-xs">
-              View, edit, and manage all your concerts in one place.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowAddConcert(true)}
-            className="inline-flex h-9 w-fit items-center gap-1.5 rounded-lg bg-[linear-gradient(100deg,#8B5CF6_0%,#6539D5_100%)] px-3.5 text-[11px] font-semibold text-white shadow-[0_6px_20px_rgba(139,92,246,0.4)] transition hover:brightness-110"
-          >
-            <span className="text-base leading-none">+</span> Add New Concerts
-          </button>
-        </div>
-      </section>
+      {/* SHARED ORGANIZER HERO */}
+      <OrganizerPageHero
+        eyebrow="ORGANIZER MANAGEMENT"
+        title={
+          <>
+            Manage{" "}
+            <span className="bg-[linear-gradient(90deg,#A78BFA,#22D3EE)] bg-clip-text text-transparent">
+              Concerts
+            </span>
+          </>
+        }
+        description="View, edit, and manage all your concerts in one place."
+        className="mb-0"
+      >
+        <button
+          type="button"
+          onClick={() => setShowAddConcert(true)}
+          className="inline-flex h-11 w-fit items-center gap-2 rounded-xl bg-[linear-gradient(100deg,#8B5CF6_0%,#6539D5_100%)] px-5 text-sm font-semibold text-white shadow-[0_6px_20px_rgba(139,92,246,0.4)] transition hover:brightness-110"
+        >
+          <span className="text-lg leading-none">+</span>
+          Add New Concerts
+        </button>
+      </OrganizerPageHero>
 
       {/* STATS */}
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

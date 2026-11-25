@@ -10,7 +10,7 @@ import {
   type ApiMyOrder,
 } from "@/lib/api";
 
-import { formatCurrency } from "@/lib/customer";
+import { formatCurrency, imageUrl } from "@/lib/customer";
 
 /* ------------------------------------------------------------------ */
 /* Types & constants                                                   */
@@ -76,6 +76,8 @@ function formatOrderDate(date: string) {
     day: "2-digit",
     month: "short",
     year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   }).format(parsedDate);
 }
 
@@ -275,6 +277,11 @@ function OrderCard({
 }) {
   const status = statusKey(order.status);
 
+  // Convert backend poster path into a usable image URL.
+  const posterSrc = order.poster_url
+    ? imageUrl(order.poster_url)
+    : FALLBACK_POSTER;
+
   return (
     <article className="overflow-hidden rounded-lg border border-[#908FA0]/30 bg-[#171B26] transition hover:border-[#8B5CF6]/50">
       {/* Header */}
@@ -294,10 +301,11 @@ function OrderCard({
       <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <img
-            src={order.poster_url || FALLBACK_POSTER}
-            alt={order.event_name}
-            onError={(e) => {
-              e.currentTarget.src = FALLBACK_POSTER;
+            src={posterSrc}
+            alt={order.event_name || "Concert poster"}
+            onError={(event) => {
+              event.currentTarget.onerror = null;
+              event.currentTarget.src = FALLBACK_POSTER;
             }}
             className="h-[65px] w-[65px] shrink-0 rounded-md border border-white/10 object-cover sm:h-[76px] sm:w-[76px]"
           />
@@ -591,7 +599,7 @@ export default function MyOrdersPage() {
       <main className="w-full space-y-5 pb-10">
         {/* Heading */}
         <section>
-          <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#22D3EE]">
+          <p className="w-fit bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text text-[10px] font-extrabold uppercase tracking-wider text-transparent">
             LYNORA PASSPORT
           </p>
 

@@ -1,6 +1,7 @@
 const db = require("../config/database");
 const midtransConfig = require("../config/midtrans");
 const crypto = require("crypto");
+const { deliverOrderEtickets } = require("../services/eticketEmailService");
 
 const {
   verifyMidtransSignature,
@@ -108,53 +109,42 @@ async function issueTickets(connection, orderId) {
     [orderId]
   );
 
-  if (!items.length) {
-    throw new Error("Order tidak memiliki item tiket");
-  }
+  if (!items.length) throw new Error("Order tidak memiliki item tiket");
 
   let totalIssued = 0;
 
   for (const item of items) {
     const quantity = Number(item.quantity);
-
     if (!Number.isSafeInteger(quantity) || quantity <= 0) {
       throw new Error(`Quantity tidak valid pada order item ${item.id}`);
     }
 
-    const [ticketRows] = await connection.execute(
-      `SELECT COUNT(*) AS total
-       FROM tickets
-       WHERE order_item_id = ?`,
-      [item.id]
+    const [existingTickets] = await connection.execute(
+      `SELECT id FROM tickets WHERE order_item_id = ? ORDER BY id`, [item.id]
     );
-
-    const existingCount = Number(ticketRows[0]?.total || 0);
-
-    if (existingCount > quantity) {
-      throw new Error(
-        `Jumlah tiket melebihi quantity order item ${item.id}`
-      );
+    if (existingTickets.length > quantity) {
+      throw new Error(`Jumlah tiket melebihi quantity order item ${item.id}`);
     }
 
-    const missingCount = quantity - existingCount;
+    // Ambil attendee berdasarkan order item. Untuk order lama tanpa data attendee,
+    // penerbitan tiket tetap mengikuti perilaku lama (attendee_id NULL).
+    const [attendees] = await connection.execute(
+      `SELECT id FROM ticket_attendees WHERE order_item_id = ? ORDER BY id`, [item.id]
+    );
 
+    if (attendees.length && attendees.length !== quantity) {
+      throw new Error(`Jumlah attendee tidak sama dengan quantity order item ${item.id}`);
+    }
+
+    const missingCount = quantity - existingTickets.length;
     for (let i = 0; i < missingCount; i++) {
+      const attendee = attendees.length ? attendees[existingTickets.length + i] : null;
       await connection.execute(
         `INSERT INTO tickets (
-           order_item_id,
-           ticket_code,
-           qr_token,
-           status,
-           issued_at
-         )
-         VALUES (?, ?, ?, 'valid', NOW())`,
-        [
-          item.id,
-          generateTicketCode(item.id),
-          generateQrToken(),
-        ]
+           order_item_id, attendee_id, ticket_code, qr_token, status, issued_at
+         ) VALUES (?, ?, ?, ?, 'valid', NOW())`,
+        [item.id, attendee ? attendee.id : null, generateTicketCode(item.id), generateQrToken()]
       );
-
       totalIssued++;
     }
   }
@@ -586,6 +576,16 @@ async function handleMidtransWebhook(req, res) {
     await connection.commit();
     transactionStarted = false;
 
+    // Email dikirim setelah transaksi pembayaran dan penerbitan tiket tersimpan.
+    // Kegagalan email tidak membatalkan pembayaran maupun tiket.
+    if (paymentStatus === "success") {
+      try {
+        await deliverOrderEtickets(order.id);
+      } catch (emailError) {
+        console.error("[midtrans-webhook] E-ticket email delivery error:", emailError.message);
+      }
+    }
+
     return res.status(200).json({
       message: "Notifikasi pembayaran berhasil diproses",
       order_code: order.order_code,
@@ -719,8 +719,17 @@ async function checkPaymentStatus(req, res) {
         orderId
       );
 
-      await connection.commit();
+     await connection.commit();
       transactionStarted = false;
+
+      try {
+        await deliverOrderEtickets(orderId);
+      } catch (emailError) {
+        console.error(
+          "[payment-status] E-ticket email delivery error:",
+          emailError.message
+        );
+      }
 
       return res.status(200).json({
         message:
@@ -992,6 +1001,17 @@ async function checkPaymentStatus(req, res) {
 
     await connection.commit();
     transactionStarted = false;
+
+    if (paymentStatus === "success") {
+      try {
+        await deliverOrderEtickets(orderId);
+      } catch (emailError) {
+        console.error(
+          "[payment-status] E-ticket email delivery error:",
+          emailError.message
+        );
+      }
+    }
 
     return res.status(200).json({
       message: "Status pembayaran berhasil diperiksa",

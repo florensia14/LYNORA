@@ -21,6 +21,7 @@ type Notification = {
   type: NotificationKind;
   read: boolean;
   event_id: number | null;
+  ticket_id?: number | null;
   event_name?: string | null;
   poster_url?: string | null;
   start_date?: string | null;
@@ -275,13 +276,15 @@ function ArrowIcon() {
 
 function NotificationAction({
   type,
+  ticketId,
 }: {
   type: Notification["type"];
+  ticketId?: number | null;
 }) {
   const actions = {
     ticket: {
       label: "View Ticket",
-      href: "/customer/tickets",
+      href: ticketId ? `/customer/tickets?ticketId=${ticketId}` : "/customer/tickets",
     },
     reminder: {
       label: "View Event",
@@ -407,7 +410,7 @@ function NotificationCard({
                 </p>
               </div>
 
-              <NotificationAction type={item.type} />
+              <NotificationAction type={item.type} ticketId={item.ticket_id} />
             </div>
           )}
 
@@ -428,7 +431,7 @@ function NotificationCard({
               )}
 
               {item.type === "promo" && (
-                <NotificationAction type={item.type} />
+                <NotificationAction type={item.type} ticketId={item.ticket_id} />
               )}
 
               {item.type === "system" && (
@@ -674,7 +677,7 @@ function UpcomingConcert() {
             </p>
 
             <Link
-              href="/customer/tickets"
+              href={`/customer/tickets?ticketId=${ticket.ticket_id}`}
               className="mt-2 flex items-center justify-center gap-2 rounded-md bg-[#8B5CF6] py-2.5 text-[10px] font-extrabold text-white transition hover:bg-[#7543E8]"
             >
               <img
@@ -820,6 +823,7 @@ export default function NotificationsPage() {
         const result = await customerApi<{ notifications?: Array<{
           id: number;
           event_id: number | null;
+          ticket_id?: number | null;
           title: string;
           message: string;
           type: string;
@@ -843,6 +847,7 @@ export default function NotificationsPage() {
           type: mapNotificationType(row.type),
           read: Boolean(row.is_read),
           event_id: row.event_id,
+          ticket_id: row.ticket_id ?? null,
           event_name: row.event_name,
           poster_url: row.poster_url,
           start_date: row.start_date,

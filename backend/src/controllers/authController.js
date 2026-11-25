@@ -25,10 +25,12 @@ async function register(req, res) {
       });
     }
 
-    if (typeof name !== "string" ||
-        typeof email !== "string" ||
-        typeof phone !== "string" ||
-        typeof password !== "string") {
+    if (
+      typeof name !== "string" ||
+      typeof email !== "string" ||
+      typeof phone !== "string" ||
+      typeof password !== "string"
+    ) {
       return res.status(400).json({
         message: "Format data tidak valid",
       });
@@ -44,9 +46,11 @@ async function register(req, res) {
       });
     }
 
-    if (normalizedName.length > 100 ||
-        normalizedEmail.length > 150 ||
-        normalizedPhone.length > 20) {
+    if (
+      normalizedName.length > 100 ||
+      normalizedEmail.length > 150 ||
+      normalizedPhone.length > 20
+    ) {
       return res.status(400).json({
         message: "Panjang data melebihi batas yang ditentukan",
       });
@@ -114,7 +118,7 @@ async function login(req, res) {
     const normalizedEmail = email.trim().toLowerCase();
 
     const [users] = await db.execute(
-      `SELECT id, name, email, password, role, is_active
+      `SELECT id, name, email, password, role, profile_photo, is_active
        FROM users
        WHERE email = ?`,
       [normalizedEmail]
@@ -155,6 +159,7 @@ async function login(req, res) {
         name: user.name,
         email: user.email,
         role: user.role,
+        profile_photo: user.profile_photo || null,
       },
     });
   } catch (error) {

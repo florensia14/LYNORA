@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { getCustomerSidebarCollapsed, initializeCustomerSidebarPreference, setCustomerSidebarCollapsed, subscribeCustomerSidebar } from "@/lib/customer-sidebar-state";
 
 type Role = "customer" | "organizer" | "super_admin";
 type Lang = "EN" | "ID";
@@ -393,6 +394,16 @@ export default function Sidebar({
 
   const [user, setUser] = useState<SidebarUser | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(getCustomerSidebarCollapsed);
+
+  useEffect(() => {
+    setCollapsed(initializeCustomerSidebarPreference());
+    return subscribeCustomerSidebar(setCollapsed);
+  }, []);
+
+  function toggleCollapsed() {
+    setCustomerSidebarCollapsed(!collapsed);
+  }
   const [popupOpen, setPopupOpen] = useState(false);
   const [lang, setLang] = useState<Lang>("EN");
   const [theme, setTheme] = useState<Theme>("Dark");
@@ -612,15 +623,15 @@ export default function Sidebar({
 
       {/* SIDEBAR */}
       <aside
-        className={`fixed inset-y-0 left-0 z-[70] flex w-[min(280px,85vw)] flex-col border-r border-[#8B5CF6]/70 bg-[#0B1122] text-[#f8f9ff] shadow-2xl transition-transform duration-300 ease-out lg:z-40 lg:w-[205px] lg:translate-x-0 lg:shadow-none ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed inset-y-0 left-0 z-[70] flex w-[min(280px,85vw)] flex-col border-r border-[#8B5CF6]/70 bg-[#0B1122] text-[#f8f9ff] shadow-2xl transition-[width,transform] duration-300 ease-out lg:z-40 lg:translate-x-0 lg:shadow-none ${
+          collapsed ? "lg:w-[72px]" : "lg:w-[205px]"
+        } ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         {/* SIDEBAR HEADER */}
-        <div className="flex h-[70px] shrink-0 items-center justify-between border-b border-white/10 px-3">
+        <div className={`flex h-[70px] shrink-0 items-center border-b border-white/10 px-3 ${collapsed ? "lg:justify-center" : "justify-between"}`}>
           <Link
             href={dashboardHome[role]}
-            className="bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text text-[25px] font-black leading-none tracking-tight text-transparent"
+            className={`bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text text-[25px] font-black leading-none tracking-tight text-transparent ${collapsed ? "lg:hidden" : ""}`}
           >
             LYNORA
           </Link>
@@ -644,20 +655,22 @@ export default function Sidebar({
             </svg>
           </button>
 
-          <span className="hidden h-9 w-9 place-items-center lg:grid">
-            <img
-              src="/icons/grid.png"
-              alt=""
-              className="h-[23px] w-[23px] object-contain"
-            />
-          </span>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
+            className="hidden h-9 w-9 shrink-0 place-items-center rounded-lg text-[#A9AAB4] transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] lg:grid"
+          >
+            <img src="/icons/grid.png" alt="" className="h-[23px] w-[23px] object-contain" />
+          </button>
         </div>
 
         {/* NAVIGATION */}
-        <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <nav className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${collapsed ? "px-2 py-4 lg:px-2" : "px-3 py-4"}`}>
           {menuGroups.map((group) => (
-            <div key={group.title} className="mb-5">
-              <h3 className="mb-3 mt-2 px-1 text-[12px] font-bold text-[#727b96]">
+            <div key={group.title} className={collapsed ? "mb-2 lg:mb-1" : "mb-5"}>
+              <h3 className={`mb-3 mt-2 px-1 text-[12px] font-bold text-[#727b96] ${collapsed ? "lg:hidden" : ""}`}>
                 {group.title}
               </h3>
 
@@ -671,7 +684,10 @@ export default function Sidebar({
                       href={item.href}
                       aria-current={selected ? "page" : undefined}
                       onClick={() => setMobileOpen(false)}
-                      className={`group flex min-h-[44px] items-center gap-3 rounded-lg px-3 text-[14px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] ${
+                      title={collapsed ? item.label : undefined}
+                      className={`group flex min-h-[44px] items-center rounded-lg text-[14px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8B5CF6] ${
+                        collapsed ? "justify-center px-0 lg:gap-0" : "gap-3 px-3"
+                      } ${
                         selected
                           ? "bg-[linear-gradient(90deg,#22D3EE_0%,#332D87_3%,#332D87_100%)] font-bold text-white shadow-[0_4px_10px_rgba(34,211,238,0.16)]"
                           : "text-[#858da5] hover:bg-[#191e3a] hover:text-white"
@@ -689,7 +705,7 @@ export default function Sidebar({
                         className="h-6 w-6 shrink-0 object-contain"
                       />
 
-                      <span className="truncate">{item.label}</span>
+                      <span className={`truncate ${collapsed ? "lg:hidden" : ""}`}>{item.label}</span>
                     </Link>
                   );
                 })}
@@ -707,7 +723,7 @@ export default function Sidebar({
           {popupOpen && (
             <div
               role="menu"
-              className="absolute inset-x-2 bottom-full z-10 mb-2 overflow-hidden rounded-2xl border border-[#8B5CF6]/25 bg-[#141312] shadow-[0_16px_48px_rgba(0,0,0,0.65)]"
+              className="absolute bottom-full left-2 z-10 mb-2 w-[min(260px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-[#8B5CF6]/25 bg-[#141312] shadow-[0_16px_48px_rgba(0,0,0,0.65)]"
             >
               <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#8B5CF6] to-transparent" />
 
@@ -846,7 +862,7 @@ export default function Sidebar({
             onClick={() => setPopupOpen((value) => !value)}
             aria-haspopup="menu"
             aria-expanded={popupOpen}
-            className="flex w-full min-w-0 items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8B5CF6]"
+            className={`flex w-full min-w-0 items-center px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8B5CF6] ${collapsed ? "lg:justify-center lg:px-0" : "gap-2.5"}`}
           >
             <img
               key={`${profilePhoto}-${user?.photo_version || 0}`}
@@ -859,7 +875,7 @@ export default function Sidebar({
               }}
             />
 
-            <div className="min-w-0 flex-1">
+            <div className={`min-w-0 flex-1 ${collapsed ? "lg:hidden" : ""}`}>
               <strong className="block truncate text-[12px] font-bold text-[#f8f9ff]">
                 {user?.name || "LYNORA User"}
               </strong>
@@ -869,7 +885,7 @@ export default function Sidebar({
               </span>
             </div>
 
-            <span className="shrink-0 text-[#6b7280]">
+            <span className={`shrink-0 text-[#6b7280] ${collapsed ? "lg:hidden" : ""}`}>
               <Chevron up={popupOpen} />
             </span>
           </button>
@@ -877,7 +893,7 @@ export default function Sidebar({
           <div className="h-px bg-[#41445b]" />
 
           {/* BRAND FOOTER */}
-          <div className="bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text pb-2 pt-1.5 text-center text-[20px] font-medium leading-tight tracking-[3px] text-transparent">
+          <div className={`bg-gradient-to-r from-[#8B5CF6] to-[#22D3EE] bg-clip-text pb-2 pt-1.5 text-center text-[20px] font-medium leading-tight tracking-[3px] text-transparent ${collapsed ? "lg:hidden" : ""}`}>
             LYNORA
           </div>
         </div>

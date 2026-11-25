@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
+import { getCustomerSidebarCollapsed, initializeCustomerSidebarPreference, subscribeCustomerSidebar } from "@/lib/customer-sidebar-state";
 import { API_URL, imageUrl, type User } from "@/lib/customer";
 
 type CustomerUser = User & { photo_version?: number };
@@ -177,6 +178,19 @@ export default function CustomerShell({
   children,
 }: CustomerShellProps) {
   const router = useRouter();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(getCustomerSidebarCollapsed);
+
+  useEffect(() => {
+  const initialValue = initializeCustomerSidebarPreference();
+
+  setSidebarCollapsed(initialValue);
+
+  const unsubscribe = subscribeCustomerSidebar(setSidebarCollapsed);
+
+  return () => {
+    unsubscribe();
+  };
+}, []);
 
   const [user, setUser] = useState<CustomerUser | null>(null);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -342,10 +356,10 @@ export default function CustomerShell({
   };
 
   return (
-    <main className="cust-shell min-h-screen w-full overflow-x-clip bg-[#0B1122] text-white">
+    <main data-sidebar-collapsed={sidebarCollapsed} className="cust-shell min-h-screen w-full overflow-x-clip bg-[#0B1122] text-white">
       <Sidebar fallbackRole="customer" />
 
-      <div className="cust-main min-h-screen min-w-0 w-full pt-14 lg:ml-[205px] lg:w-[calc(100%-205px)] lg:pt-0">
+      <div className="cust-main min-h-screen min-w-0 w-full pt-14 lg:pt-0">
         <header
           data-page={title.toLowerCase()}
           className="sticky top-14 z-30 w-full border-b border-white/[0.07] bg-[linear-gradient(90deg,#0D1328_0%,#162140_25%,#1E2B54_50%,#141C3D_70%,#0B1122_100%)] px-3 py-2.5 backdrop-blur-xl sm:px-5 lg:top-0 lg:px-5 lg:py-2.5 xl:px-6"
