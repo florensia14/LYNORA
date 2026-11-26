@@ -205,7 +205,10 @@ async function attachTicketAvailability(events) {
     const salesStart = parseDate(event.sales_start_at);
     const salesEnd = parseDate(event.sales_end_at);
 
-    if (eventEnd && now > eventEnd) {
+    const eventStart = parseDate(event.start_date);
+
+    // Event lifecycle has priority over ticket inventory and sales windows.
+    if (eventEnd && now >= eventEnd) {
       event.sales_status = "ended";
     } else if (
       event.total_quota > 0 &&
@@ -217,12 +220,12 @@ async function attachTicketAvailability(events) {
     } else if (now < salesStart) {
       event.sales_status = "coming_soon";
     } else if (
-      now >= salesStart &&
-      (!salesEnd || now <= salesEnd)
+      (eventStart && now >= eventStart) ||
+      (salesEnd && now > salesEnd)
     ) {
-      event.sales_status = "on_sale";
-    } else {
       event.sales_status = "not_available";
+    } else {
+      event.sales_status = "on_sale";
     }
   }
 
@@ -568,6 +571,39 @@ async function getMyEvents(req, res) {
   }
 }
 // ======================================================
+
+// Resolve a venue from free-text organizer input. Existing records are reused only
+// when all identifying fields match; shared venue rows are never overwritten.
+async function resolveVenue(connection, { venue_id, venue_name, venue_address, latitude, longitude }) {
+  const name = cleanString(venue_name);
+  const address = cleanString(venue_address) || name;
+  if (name) {
+    const lat = latitude === "" || latitude == null ? null : Number(latitude);
+    const lon = longitude === "" || longitude == null ? null : Number(longitude);
+    if ((lat !== null && (!Number.isFinite(lat) || lat < -90 || lat > 90)) ||
+        (lon !== null && (!Number.isFinite(lon) || lon < -180 || lon > 180))) {
+      throw new Error("Koordinat venue tidak valid");
+    }
+    if (lat === null || lon === null) throw new Error("Pilih lokasi venue dari hasil pencarian agar latitude dan longitude terisi otomatis");
+    const [matches] = await connection.execute(
+      `SELECT id FROM venues WHERE name = ? AND address = ?
+       AND (latitude <=> ?) AND (longitude <=> ?) LIMIT 1`,
+      [name, address, lat, lon]
+    );
+    if (matches.length) return Number(matches[0].id);
+    const [inserted] = await connection.execute(
+      `INSERT INTO venues (name, address, latitude, longitude) VALUES (?, ?, ?, ?)`,
+      [name, address, lat, lon]
+    );
+    return Number(inserted.insertId);
+  }
+  if (venue_id && isValidId(venue_id)) {
+    const [rows] = await connection.execute("SELECT id FROM venues WHERE id = ?", [venue_id]);
+    if (rows.length) return Number(rows[0].id);
+  }
+  throw new Error("Nama venue dan alamat wajib diisi");
+}
+
 // ORGANIZER: CREATE EVENT
 // ======================================================
 
@@ -581,6 +617,10 @@ async function createEvent(req, res) {
       description,
       category_id,
       venue_id,
+      venue_name,
+      venue_address,
+      latitude,
+      longitude,
       start_date,
       end_date,
       artist_name,
@@ -593,7 +633,7 @@ async function createEvent(req, res) {
       !cleanString(name) ||
       !cleanString(description) ||
       !category_id ||
-      !venue_id ||
+      !(cleanString(venue_name) || venue_id) ||
       !start_date ||
       !end_date
     ) {
@@ -605,7 +645,7 @@ async function createEvent(req, res) {
       });
     }
 
-    if (!isValidId(category_id) || !isValidId(venue_id)) {
+    if (!isValidId(category_id) || (venue_id && !isValidId(venue_id))) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
@@ -647,20 +687,21 @@ async function createEvent(req, res) {
       [category_id]
     );
 
-    const [venues] = await connection.execute(
-      "SELECT id FROM venues WHERE id = ?",
-      [venue_id]
-    );
-
-    if (!categories.length || !venues.length) {
+    if (!categories.length) {
       await rollbackIfNeeded(connection, transactionStarted);
       transactionStarted = false;
-
       deleteUploadedFile(req);
+      return res.status(400).json({ message: "Kategori konser tidak ditemukan" });
+    }
 
-      return res.status(400).json({
-        message: "Kategori konser atau venue tidak ditemukan",
-      });
+    let resolvedVenueId;
+    try {
+      resolvedVenueId = await resolveVenue(connection, { venue_id, venue_name, venue_address, latitude, longitude });
+    } catch (venueError) {
+      await rollbackIfNeeded(connection, transactionStarted);
+      transactionStarted = false;
+      deleteUploadedFile(req);
+      return res.status(400).json({ message: venueError.message || "Data venue tidak valid" });
     }
 
     const posterUrl = getPosterUrl(req.file);
@@ -689,7 +730,7 @@ async function createEvent(req, res) {
       [
         req.user.id,
         Number(category_id),
-        Number(venue_id),
+        resolvedVenueId,
         cleanString(name),
         cleanString(description),
         posterUrl,
@@ -723,7 +764,11 @@ async function createEvent(req, res) {
         description: cleanString(description),
         poster_url: posterUrl,
         category_id: Number(category_id),
-        venue_id: Number(venue_id),
+        venue_id: resolvedVenueId,
+        venue_name: cleanString(venue_name),
+        venue_address: cleanString(venue_address),
+        latitude: latitude === "" ? null : Number(latitude),
+        longitude: longitude === "" ? null : Number(longitude),
         start_date,
         end_date,
         sales_start_at: salesWindow.salesStart,
@@ -764,6 +809,10 @@ async function updateEvent(req, res) {
       description,
       category_id,
       venue_id,
+      venue_name,
+      venue_address,
+      latitude,
+      longitude,
       start_date,
       end_date,
       artist_name,
@@ -784,7 +833,7 @@ async function updateEvent(req, res) {
       !cleanString(name) ||
       !cleanString(description) ||
       !category_id ||
-      !venue_id ||
+      !(cleanString(venue_name) || venue_id) ||
       !start_date ||
       !end_date
     ) {
@@ -796,7 +845,7 @@ async function updateEvent(req, res) {
       });
     }
 
-    if (!isValidId(category_id) || !isValidId(venue_id)) {
+    if (!isValidId(category_id) || (venue_id && !isValidId(venue_id))) {
       deleteUploadedFile(req);
 
       return res.status(400).json({
@@ -885,20 +934,21 @@ async function updateEvent(req, res) {
       [category_id]
     );
 
-    const [venues] = await connection.execute(
-      "SELECT id FROM venues WHERE id = ?",
-      [venue_id]
-    );
-
-    if (!categories.length || !venues.length) {
+    if (!categories.length) {
       await rollbackIfNeeded(connection, transactionStarted);
       transactionStarted = false;
-
       deleteUploadedFile(req);
+      return res.status(400).json({ message: "Kategori konser tidak ditemukan" });
+    }
 
-      return res.status(400).json({
-        message: "Kategori atau venue tidak ditemukan",
-      });
+    let resolvedVenueId;
+    try {
+      resolvedVenueId = await resolveVenue(connection, { venue_id, venue_name, venue_address, latitude, longitude });
+    } catch (venueError) {
+      await rollbackIfNeeded(connection, transactionStarted);
+      transactionStarted = false;
+      deleteUploadedFile(req);
+      return res.status(400).json({ message: venueError.message || "Data venue tidak valid" });
     }
 
     const oldPoster = events[0].poster_url;
@@ -932,7 +982,7 @@ async function updateEvent(req, res) {
         cleanString(name),
         cleanString(description),
         Number(category_id),
-        Number(venue_id),
+        resolvedVenueId,
         newPoster,
         start_date,
         end_date,
@@ -977,6 +1027,11 @@ async function updateEvent(req, res) {
         ? "Konser berhasil diperbarui"
         : "Konser berhasil diperbarui dan dikirim ulang untuk persetujuan",
       event_id: Number(id),
+      venue_id: resolvedVenueId,
+      venue_name: cleanString(venue_name),
+      venue_address: cleanString(venue_address),
+      latitude: latitude === "" || latitude == null ? null : Number(latitude),
+      longitude: longitude === "" || longitude == null ? null : Number(longitude),
       poster_url: newPoster,
       status: wasApproved ? events[0].status : "pending",
       approval_status: wasApproved ? "approved" : "pending",
@@ -1675,13 +1730,20 @@ async function fetchConcertRows(organizerId, limit) {
     `SELECT
        e.id,
        e.name,
+       e.description,
+       e.category_id,
+       e.venue_id,
        e.poster_url,
        e.start_date,
        e.end_date,
+       e.sales_start_at,
+       e.sales_end_at,
        e.approval_status,
        e.publication_status,
        v.name AS venue_name,
        v.address AS venue_address,
+       v.latitude,
+       v.longitude,
        c.name AS category_name,
        COALESCE(q.quota, 0) AS quota,
        COALESCE(s.sold, 0) AS sold,
@@ -1716,12 +1778,19 @@ async function fetchConcertRows(organizerId, limit) {
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
+    description: row.description || "",
+    category_id: row.category_id,
+    category_name: row.category_name,
+    venue_id: row.venue_id,
+    venue_name: row.venue_name,
+    venue_address: row.venue_address,
+    latitude: row.latitude == null ? null : Number(row.latitude),
+    longitude: row.longitude == null ? null : Number(row.longitude),
     poster_url: row.poster_url,
     start_date: row.start_date,
     end_date: row.end_date,
-    venue_name: row.venue_name,
-    venue_address: row.venue_address,
-    category_name: row.category_name,
+    sales_start_at: row.sales_start_at,
+    sales_end_at: row.sales_end_at,
     quota: Number(row.quota),
     sold: Number(row.sold),
     revenue: Number(row.revenue),

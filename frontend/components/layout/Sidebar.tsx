@@ -1,13 +1,8 @@
 "use client";
-
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-
 import type { ReactNode } from "react";
-
 import Link from "next/link";
-
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-
 import { getCustomerSidebarCollapsed, initializeCustomerSidebarPreference, setCustomerSidebarCollapsed, subscribeCustomerSidebar } from "@/lib/customer-sidebar-state";
 
 type Role = "customer" | "organizer" | "super_admin";
@@ -40,8 +35,7 @@ type MenuGroup = {
 const API_ORIGIN = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
 )
-  .replace(/\/api\/?$/, "").replace(/\/$/, "");
-
+  .replace(/\/api$/i, "").replace(/\/$/, "");
 const icon = (name: string) => `/icons/${name}.png`;
 
 const iconActive = (name: string) => `/icons/${name}%20(1).png`;
@@ -262,7 +256,6 @@ const svgProps = {
 };
 
 // USER ICON
-
 const UserIcon = () => (
   <svg {...svgProps}>
     <circle cx="12" cy="8" r="4" />
@@ -271,7 +264,6 @@ const UserIcon = () => (
 );
 
 // SETTINGS ICON
-
 const GearIcon = () => (
   <svg {...svgProps}>
     <circle cx="12" cy="12" r="3" />
@@ -280,7 +272,6 @@ const GearIcon = () => (
 );
 
 // LANGUAGE ICON
-
 const LangIcon = () => (
   <svg {...svgProps}>
     <path d="M4 5h9M8.5 3v2M6 5c.5 4 3 7 6 8M12 5c-.5 4-3 7-7 9" />
@@ -289,7 +280,6 @@ const LangIcon = () => (
 );
 
 // MOON ICON
-
 const MoonIcon = ({ small }: { small?: boolean }) => (
   <svg {...svgProps} {...(small ? { width: 14, height: 14 } : {})}>
     <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
@@ -297,7 +287,6 @@ const MoonIcon = ({ small }: { small?: boolean }) => (
 );
 
 // SUN ICON
-
 const SunIcon = ({ small }: { small?: boolean }) => (
   <svg {...svgProps} {...(small ? { width: 14, height: 14 } : {})}>
     <circle cx="12" cy="12" r="4" />
@@ -306,7 +295,6 @@ const SunIcon = ({ small }: { small?: boolean }) => (
 );
 
 // LOGOUT ICON
-
 const LogoutIcon = () => (
   <svg {...svgProps}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -315,7 +303,6 @@ const LogoutIcon = () => (
 );
 
 // CHEVRON ICON
-
 const Chevron = ({ up }: { up: boolean }) => (
   <svg
     width="16"
@@ -336,7 +323,6 @@ const Chevron = ({ up }: { up: boolean }) => (
 );
 
 // SEGMENTED CONTROL
-
 function Segmented<T extends string>({
   value,
   options,
@@ -376,7 +362,6 @@ function Segmented<T extends string>({
 }
 
 // PROFILE PHOTO
-
 function getSidebarProfilePhoto(
   photo?: string | null,
   photoVersion?: number
@@ -392,7 +377,6 @@ function getSidebarProfilePhoto(
 }
 
 // MAIN SIDEBAR
-
 function SidebarContent({
   fallbackRole = "customer",
 }: {
@@ -407,9 +391,7 @@ function SidebarContent({
   const [collapsed, setCollapsed] = useState(getCustomerSidebarCollapsed);
   useEffect(() => {
     setCollapsed(initializeCustomerSidebarPreference());
-
     const unsubscribe = subscribeCustomerSidebar(setCollapsed);
-
     return () => {
       unsubscribe();
     };
@@ -417,7 +399,7 @@ function SidebarContent({
   useEffect(() => {
     document.documentElement.style.setProperty(
       "--organizer-sidebar-width",
-      collapsed ? "80px" : "240px"
+      collapsed ? "80px" : "220px"
     );
     return () => {
       document.documentElement.style.removeProperty(
@@ -608,8 +590,8 @@ function SidebarContent({
       />
       {/* SIDEBAR */}
       <aside
-        className={`fixed inset-y-0 left-0 z-[70] flex w-[min(280px,85vw)] flex-col border-r border-[#8B5CF6]/70 bg-[#0B1122] text-[#f8f9ff] shadow-2xl transition-[width,transform] duration-300 ease-out lg:z-40 lg:translate-x-0 lg:shadow-none ${
-          collapsed ? "lg:w-[80px]" : "lg:w-[240px]"
+        className={`fixed inset-y-0 left-0 z-[70] flex w-[min(260px,82vw)] flex-col border-r border-[#8B5CF6]/70 bg-[#0B1122] text-[#f8f9ff] shadow-2xl transition-[width,transform] duration-300 ease-out lg:z-40 lg:translate-x-0 lg:shadow-none ${
+          collapsed ? "lg:w-[80px]" : "lg:w-[220px]"
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         {/* SIDEBAR HEADER */}
@@ -649,7 +631,7 @@ function SidebarContent({
           </button>
         </div>
         {/* NAVIGATION */}
-        <nav className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${collapsed ? "px-2 py-4 lg:px-2" : "px-3 py-4"}`}>
+        <nav className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]\:hidden ${collapsed ? "px-2 py-4 lg:px-2" : "px-3 py-4"}`}>
           {menuGroups.map((group) => (
             <div key={group.title} className={collapsed ? "mb-2 lg:mb-1" : "mb-5"}>
               <h3 className={`mb-3 mt-2 px-1 text-[12px] font-bold text-[#727b96] ${collapsed ? "lg:hidden" : ""}`}>

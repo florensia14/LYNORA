@@ -2305,3 +2305,19 @@ footer a:hover {
   .cust-content [class*="gap-6"], .cust-content [class*="gap-8"] { gap: 12px !important; }
   .cust-content button, .cust-content a { overflow-wrap: anywhere; }
 }
+
+
+/* LYNORA: hide browser scrollbar chrome while keeping page scrolling enabled */
+html,
+body {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}

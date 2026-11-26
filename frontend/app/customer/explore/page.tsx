@@ -40,7 +40,7 @@ type ConcertMeta = Concert & {
 
 
 
-type StatusKey = "comingSoon" | "onSale" | "new";
+type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "new";
 
 type Option = { value: string; label: string };
 
@@ -173,13 +173,12 @@ const SORT_OPTIONS: Option[] = [
 // Status badge colors (same as Home)
 
 const STATUS: Record<StatusKey, { text: string; style: string }> = {
-
   comingSoon: { text: "Coming Soon", style: "bg-[#2E2723] text-[#F5B84E]" },
-
   onSale: { text: "On Sale", style: "bg-[#152B32] text-[#26ADA0]" },
-
+  soldOut: { text: "Sold Out", style: "bg-[#3A202B] text-[#FF8298]" },
+  ended: { text: "Ended", style: "bg-[#252A3A] text-[#AAB2C5]" },
+  salesClosed: { text: "Sales Closed", style: "bg-[#252A3A] text-[#AAB2C5]" },
   new: { text: "New", style: "bg-[#2F1E2A] text-[#FF6B81]" },
-
 };
 
 
@@ -560,19 +559,15 @@ function getStatus(concert: Concert): StatusKey {
 
 
 
+  if (salesStatus === "ended") return "ended";
+  if (salesStatus === "sold_out") return "soldOut";
   if (salesStatus === "on_sale") return "onSale";
-
-  if (salesStatus === "coming_soon" || salesStatus === "not_available") return "comingSoon";
-
-
+  if (salesStatus === "coming_soon") return "comingSoon";
+  if (salesStatus === "not_available" || salesStatus === "sales_closed") return "salesClosed";
 
   const raw = String(concert.status || "").toLowerCase();
-
   if (raw === "new") return "new";
-
-
-
-  return "comingSoon";
+  return "salesClosed";
 
 }
 
@@ -1316,7 +1311,7 @@ function ConcertCard({
 
             <InfoRow icon="/icons/pin.png" top>
 
-              <strong>
+              <strong className="line-clamp-2 break-words">
 
                 {concert.venue_name || "Venue to be announced"}
 

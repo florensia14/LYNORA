@@ -11,7 +11,7 @@ import { fetchConcerts } from "@/lib/api";
 /* -------------------------------------------------------------------------- */
 
 type WishlistTab = "all" | "upcoming" | "past";
-type StatusKey = "comingSoon" | "onSale" | "new";
+type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "new";
 
 type WishlistEvent = Omit<
   Concert,
@@ -64,6 +64,9 @@ const GRID =
 const STATUS: Record<StatusKey, { text: string; style: string }> = {
   comingSoon: { text: "Coming Soon", style: "bg-[#2E2723] text-[#F5B84E]" },
   onSale: { text: "On Sale", style: "bg-[#152B32] text-[#26ADA0]" },
+  soldOut: { text: "Sold Out", style: "bg-[#3A202B] text-[#FF8298]" },
+  ended: { text: "Ended", style: "bg-[#252A3A] text-[#AAB2C5]" },
+  salesClosed: { text: "Sales Closed", style: "bg-[#252A3A] text-[#AAB2C5]" },
   new: { text: "New", style: "bg-[#2F1E2A] text-[#FF6B81]" },
 };
 
@@ -139,16 +142,15 @@ function getDescription(concert: WishlistEvent) {
 function getStatus(concert: WishlistEvent): StatusKey {
   const salesStatus = String(concert.sales_status || "").toLowerCase();
 
+  if (salesStatus === "ended") return "ended";
+  if (salesStatus === "sold_out") return "soldOut";
   if (salesStatus === "on_sale") return "onSale";
-  if (salesStatus === "coming_soon" || salesStatus === "not_available") {
-    return "comingSoon";
-  }
+  if (salesStatus === "coming_soon") return "comingSoon";
+  if (salesStatus === "not_available") return "salesClosed";
 
   const rawStatus = String(concert.status || "").toLowerCase();
   if (rawStatus === "new") return "new";
-
-  // Match Explore's safe default: do not infer "On Sale" from event date.
-  return "comingSoon";
+  return "salesClosed";
 }
 
 function normalizeCategory(value?: string | null) {

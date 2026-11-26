@@ -8,7 +8,7 @@ import { fetchCustomerHomeConcerts, matchesCustomerHomeQuery } from "@/lib/custo
 import { API_URL, imageUrl, type Concert } from "@/lib/customer";
 // 1. TYPES
 type ConcertMeta = Concert;
-type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "new";
+type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "new";
 // 2. CONSTANTS
 const CATEGORY_ICONS: Record<string, string> = {
     pop: "microphone.png",
@@ -53,6 +53,7 @@ const STATUS: Record<StatusKey, {
     onSale: { text: "On Sale", style: "bg-[#152B32] text-[#26ADA0]" },
     soldOut: { text: "Sold Out", style: "bg-[#3A202B] text-[#FF8298]" },
     ended: { text: "Ended", style: "bg-[#252A3A] text-[#AAB2C5]" },
+    salesClosed: { text: "Sales Closed", style: "bg-[#252A3A] text-[#AAB2C5]" },
     new: { text: "New", style: "bg-[#2F1E2A] text-[#FF6B81]" },
 };
 const HERO_STATUS_LABEL: Record<string, string> = {
@@ -243,7 +244,10 @@ function getPoster(path?: string | null) {
     return isLocalOrRemote ? path : imageUrl(path);
 }
 function getConcertStatus(concert: Concert): StatusKey {
-    switch (concert.sales_status) {
+    // Read as string so this page remains compatible with older Concert type declarations.
+    const salesStatus = String(concert.sales_status ?? "").toLowerCase();
+
+    switch (salesStatus) {
         case "on_sale":
             return "onSale";
         case "sold_out":
@@ -251,9 +255,12 @@ function getConcertStatus(concert: Concert): StatusKey {
         case "ended":
             return "ended";
         case "coming_soon":
-        case "not_available":
-        default:
             return "comingSoon";
+        case "not_available":
+        case "sales_closed":
+            return "salesClosed";
+        default:
+            return "salesClosed";
     }
 }
 function getDescription(concert: Concert) {
@@ -564,7 +571,7 @@ function ConcertCard({ concert, index, label, isWishlisted, onWishlistClick, cla
 
           <InfoRow icon="/icons/pin.png" top>
 
-            <strong>
+            <strong className="line-clamp-2 break-words">
 
               {concert.venue_name || "Venue to be announced"}
 

@@ -82,7 +82,13 @@ async function checkout(req, res) {
           tc.quota,
           e.id AS event_id,
           e.status AS event_status,
-          e.start_date
+          e.approval_status,
+          e.publication_status,
+          e.sales_start_at,
+          e.sales_end_at,
+          e.start_date,
+          e.end_date,
+          e.deleted_at
         FROM ticket_categories tc
         JOIN events e ON e.id = tc.event_id
         WHERE tc.id = ?
@@ -96,12 +102,31 @@ async function checkout(req, res) {
 
       const ticket = tickets[0];
 
-      if (ticket.event_status !== "published") {
-        throw new Error("Konser belum tersedia untuk pembelian");
+      if (ticket.deleted_at || ticket.event_status !== "published" ||
+          ticket.approval_status !== "approved" || ticket.publication_status !== "published") {
+        throw new Error("This concert is not available for ticket purchases.");
       }
 
-      if (new Date(ticket.start_date) <= new Date()) {
-        throw new Error("Konser sudah dimulai");
+      const now = new Date();
+      const salesStart = ticket.sales_start_at ? new Date(ticket.sales_start_at) : null;
+      const salesEnd = ticket.sales_end_at ? new Date(ticket.sales_end_at) : null;
+      const eventEnd = ticket.end_date ? new Date(ticket.end_date) : null;
+      const eventStart = ticket.start_date ? new Date(ticket.start_date) : null;
+
+      if (eventEnd && now >= eventEnd) {
+        throw new Error("This concert has ended. Please explore other upcoming concerts.");
+      }
+      if (salesStart && now < salesStart) {
+        const opening = new Intl.DateTimeFormat("en-GB", {
+          dateStyle: "long", timeStyle: "short", timeZone: "Asia/Jakarta",
+        }).format(salesStart);
+        throw new Error(`Ticket sales will open on ${opening} WIB.`);
+      }
+      if (!salesStart || (salesEnd && now > salesEnd)) {
+        throw new Error("Ticket sales are currently unavailable.");
+      }
+      if (eventStart && now >= eventStart) {
+        throw new Error("This concert has already started.");
       }
 
       const [reserved] = await connection.execute(
@@ -209,13 +234,16 @@ async function checkout(req, res) {
 
     const clientErrors = [
       "Kategori tiket tidak ditemukan",
-      "Konser belum tersedia untuk pembelian",
-      "Konser sudah dimulai",
+      "This concert is not available for ticket purchases.",
+      "This concert has ended. Please explore other upcoming concerts.",
+      "Ticket sales are currently unavailable.",
+      "This concert has already started.",
     ];
 
     if (
       clientErrors.includes(error.message) ||
-      error.message.startsWith("Kuota tiket")
+      error.message.startsWith("Kuota tiket") ||
+      error.message.startsWith("Ticket sales will open on")
     ) {
       return res.status(400).json({
         success: false,

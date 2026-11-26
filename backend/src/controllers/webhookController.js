@@ -2,6 +2,7 @@ const db = require("../config/database");
 const midtransConfig = require("../config/midtrans");
 const crypto = require("crypto");
 const { deliverOrderEtickets } = require("../services/eticketEmailService");
+const { createNotification } = require("../services/notificationService");
 
 const {
   verifyMidtransSignature,
@@ -575,6 +576,62 @@ async function handleMidtransWebhook(req, res) {
 
     await connection.commit();
     transactionStarted = false;
+
+    // Notify customer and event organizer only after the payment state is committed.
+    try {
+      if (paymentStatus === "success" && !paymentAlreadySuccessful) {
+        await createNotification({
+          userId: order.customer_id,
+          eventId: null,
+          title: "Payment successful",
+          message: `Payment for order ${order.order_code} was successful. Your e-ticket is being prepared.`,
+          type: "payment",
+        });
+        const [eventRows] = await db.execute(
+          `SELECT DISTINCT e.id, e.name, e.organizer_id
+           FROM order_items oi
+           JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+           JOIN events e ON e.id = tc.event_id
+           WHERE oi.order_id = ?`,
+          [order.id]
+        );
+        for (const event of eventRows) {
+          await createNotification({
+            userId: event.organizer_id,
+            eventId: event.id,
+            title: "Ticket payment received",
+            message: `An order for ${event.name} has been paid successfully.`,
+            type: "payment",
+          });
+        }
+      } else if (paymentStatus === "refunded") {
+        await createNotification({
+          userId: order.customer_id,
+          title: "Refund processed",
+          message: `The refund for order ${order.order_code} has been confirmed by the payment provider.`,
+          type: "payment",
+        });
+        const [eventRows] = await db.execute(
+          `SELECT DISTINCT e.id, e.name, e.organizer_id
+           FROM order_items oi
+           JOIN ticket_categories tc ON tc.id = oi.ticket_category_id
+           JOIN events e ON e.id = tc.event_id
+           WHERE oi.order_id = ?`,
+          [order.id]
+        );
+        for (const event of eventRows) {
+          await createNotification({
+            userId: event.organizer_id,
+            eventId: event.id,
+            title: "Order refunded",
+            message: `An order for ${event.name} has been refunded.`,
+            type: "payment",
+          });
+        }
+      }
+    } catch (notificationError) {
+      console.error("Payment notification error:", notificationError.message);
+    }
 
     // Email dikirim setelah transaksi pembayaran dan penerbitan tiket tersimpan.
     // Kegagalan email tidak membatalkan pembayaran maupun tiket.

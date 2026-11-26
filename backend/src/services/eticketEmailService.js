@@ -123,4 +123,75 @@ async function deliverOrderEtickets(orderId) {
   return { sent };
 }
 
-module.exports = { deliverOrderEtickets };
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;",
+  })[char]);
+}
+
+async function sendOrganizerAccountEmail({ name, organizationName, email, password }) {
+  const safeName = escapeHtml(name);
+  const safeOrganization = escapeHtml(organizationName);
+  const safeEmail = escapeHtml(email);
+  const safePassword = escapeHtml(password);
+
+  const mailOptions = {
+    from: {
+      name: process.env.SMTP_FROM_NAME || "LYNORA",
+      address: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER,
+    },
+    to: email,
+    subject: "Your Organizer Account Is Ready - LYNORA",
+    text: [
+      `Hello ${name},`,
+      "",
+      `The Organizer account for ${organizationName} has been successfully created by the LYNORA team.`,
+      "",
+      "Your account details:",
+      `Organization: ${organizationName}`,
+      `Login Email: ${email}`,
+      `Temporary Password: ${password}`,
+      "Role: Event Organizer",
+      "",
+      "You can now log in to LYNORA using these credentials. For your security, please change your temporary password after logging in.",
+      "",
+      "Thank you for joining LYNORA!",
+      "Best regards,",
+      "LYNORA Team",
+    ].join("\\n"),
+    html: `
+      <div style="margin:0;padding:28px 12px;background:#f3f4f6;font-family:Arial,sans-serif;color:#20243a;line-height:1.7">
+        <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden">
+          <div style="padding:26px;text-align:center;background:#0B1122">
+            <h1 style="margin:0;color:#A78BFA;letter-spacing:3px">LYNORA</h1>
+            <p style="margin:6px 0 0;color:#CBD5E1">Your Event, Your Experience</p>
+          </div>
+          <div style="padding:28px">
+            <h2 style="margin-top:0;color:#6D42C5">Your Organizer Account Is Ready!</h2>
+            <p>Hello <strong>${safeName}</strong>,</p>
+            <p>The Organizer account for <strong>${safeOrganization}</strong> has been successfully created by the LYNORA team.</p>
+            <p>Here are your account details:</p>
+            <div style="padding:18px;background:#F5F3FF;border:1px solid #DDD6FE;border-radius:10px">
+              <p style="margin:5px 0"><strong>Organization:</strong> ${safeOrganization}</p>
+              <p style="margin:5px 0"><strong>Login Email:</strong> ${safeEmail}</p>
+              <p style="margin:5px 0"><strong>Temporary Password:</strong> ${safePassword}</p>
+              <p style="margin:5px 0"><strong>Role:</strong> Event Organizer</p>
+            </div>
+            <p>You can now log in to the LYNORA platform using these credentials.</p>
+            <p><strong>For your security, please change your temporary password after logging in.</strong></p>
+            <p>Thank you for joining LYNORA!</p>
+            <p>Best regards,<br><strong>LYNORA Team</strong></p>
+          </div>
+        </div>
+      </div>
+    `,
+  };
+
+  return getTransporter().sendMail(mailOptions);
+}
+
+module.exports = { deliverOrderEtickets, sendOrganizerAccountEmail };

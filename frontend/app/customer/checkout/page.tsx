@@ -64,6 +64,8 @@ function CheckoutContent() {
   const categoryId = Number(params.get("ticketCategoryId"));
   const initialQuantity = Number(params.get("quantity") || 1);
   const [concert, setConcert] = useState<CheckoutConcert | null>(null);
+  const [eventEnded, setEventEnded] = useState(false);
+  const [purchaseBlockedMessage, setPurchaseBlockedMessage] = useState("");
   const [quantity, setQuantity] = useState(
     Number.isSafeInteger(initialQuantity)
       ? Math.min(10, Math.max(1, initialQuantity))
@@ -97,6 +99,8 @@ function CheckoutContent() {
       try {
         setLoading(true);
         setError("");
+        setEventEnded(false);
+        setPurchaseBlockedMessage("");
         if (
           !Number.isSafeInteger(eventId) ||
           eventId <= 0 ||
@@ -108,6 +112,38 @@ function CheckoutContent() {
         const data = await fetchConcertById(eventId);
         if (!mounted) return;
         const detail = data as CheckoutConcert;
+        const status = String(detail.sales_status || detail.status || "").toLowerCase();
+        const endDate = detail.end_date ? new Date(detail.end_date) : null;
+        const ended =
+          ["ended", "completed", "finished", "past"].includes(status) ||
+          Boolean(endDate && !Number.isNaN(endDate.getTime()) && endDate.getTime() < Date.now());
+        if (ended) {
+          setConcert(detail);
+          setEventEnded(true);
+          setPurchaseBlockedMessage("This concert has ended. Please explore other upcoming concerts.");
+          return;
+        }
+        const salesStart = detail.sales_start_at ? new Date(detail.sales_start_at) : null;
+        const salesEnd = detail.sales_end_at ? new Date(detail.sales_end_at) : null;
+        const now = Date.now();
+        if (status === "coming_soon" || (salesStart && !Number.isNaN(salesStart.getTime()) && now < salesStart.getTime())) {
+          const opening = salesStart && !Number.isNaN(salesStart.getTime())
+            ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).format(salesStart)
+            : null;
+          setConcert(detail);
+          setPurchaseBlockedMessage(opening ? `Ticket sales will open on ${opening} WIB.` : "Ticket sales have not started yet. Please check back later.");
+          return;
+        }
+        if (status === "sold_out") {
+          setConcert(detail);
+          setPurchaseBlockedMessage("All tickets are sold out. Please explore other upcoming concerts.");
+          return;
+        }
+        if (status !== "on_sale" || (salesEnd && !Number.isNaN(salesEnd.getTime()) && now > salesEnd.getTime())) {
+          setConcert(detail);
+          setPurchaseBlockedMessage("Ticket sales are currently closed. Please explore other upcoming concerts.");
+          return;
+        }
         const category = detail.ticket_categories?.find(
           (item) => Number(item.id) === categoryId,
         );
@@ -117,7 +153,9 @@ function CheckoutContent() {
           );
         }
         if (Number(category.remaining ?? 0) < 1) {
-          throw new Error("Tiket untuk kategori ini sedang tidak tersedia.");
+          setConcert(detail);
+          setPurchaseBlockedMessage("This ticket category is sold out. Please choose another available category.");
+          return;
         }
         setConcert(detail);
       } catch (err) {
@@ -145,6 +183,10 @@ function CheckoutContent() {
   const subtotal = Number(selectedTicket?.price || 0) * quantity;
   async function handleContinuePayment() {
     if (!concert || !selectedTicket || processing) return;
+    if (purchaseBlockedMessage || eventEnded || concert.sales_status !== "on_sale") {
+      setError(purchaseBlockedMessage || "Ticket sales are not available for this concert.");
+      return;
+    }
     if (!agreed) {
       setError("Silakan setujui syarat dan ketentuan terlebih dahulu.");
       return;
@@ -303,6 +345,23 @@ setOrderId(orderResult.order.id);
             Explore Concerts
           </Link>
         </div>
+      </CustomerShell>
+    );
+  }
+  if ((eventEnded || purchaseBlockedMessage) && concert) {
+    return (
+      <CustomerShell title="Checkout" subtitle="Ticket sales are not available for this concert.">
+        <main className="mx-auto w-full max-w-3xl px-3 py-8 sm:px-5">
+          <div className="rounded-2xl border border-[#8B5CF6]/35 bg-[#17152B] p-6 text-center sm:p-9">
+            <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[#8B5CF6]/15 text-2xl text-[#B9A7FF]">♪</div>
+            <p className="mt-4 text-[10px] font-black uppercase tracking-[0.18em] text-[#B9A7FF]">Ticket Sales Unavailable</p>
+            <h1 className="mt-2 text-xl font-black text-white">{eventEnded ? "This concert has ended." : "You cannot purchase tickets yet."}</h1>
+            <p className="mt-2 text-sm text-slate-300">{purchaseBlockedMessage || "Please explore other upcoming concerts."}</p>
+            <Link href="/customer/explore" className="mt-5 inline-flex rounded-lg bg-[#5456DE] px-5 py-3 text-xs font-extrabold text-white transition hover:bg-[#6668E8]">
+              Explore Upcoming Concerts
+            </Link>
+          </div>
+        </main>
       </CustomerShell>
     );
   }
@@ -567,7 +626,7 @@ setOrderId(orderResult.order.id);
             <button
               type="button"
               onClick={handleContinuePayment}
-              disabled={processing || checkingStatus}
+              disabled={processing || checkingStatus || Boolean(purchaseBlockedMessage) || eventEnded || concert.sales_status !== "on_sale"}
               className="mt-5 w-full rounded-lg bg-gradient-to-r from-[#6255DF] to-[#8B5CF6] px-4 py-3 text-xs font-black text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {processing ? "Processing..." : "Continue to Payment →"}

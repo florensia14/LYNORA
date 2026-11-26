@@ -17,6 +17,15 @@ type OrganizerUser = {
   photo_version?: number;
 };
 
+type ApiNotification = {
+  id: number;
+  title: string;
+  message: string;
+  type: string;
+  is_read: boolean | number;
+  created_at: string;
+};
+
 type NotificationItem = {
   id: string | number;
   title: string;
@@ -39,6 +48,30 @@ const notificationTabs = [
 ] as const;
 
 type NotificationTab = (typeof notificationTabs)[number]["id"];
+
+
+function mapNotification(row: ApiNotification): NotificationItem {
+  const type = String(row.type || "").toLowerCase();
+  const style = type === "payment"
+    ? { icon: "💳", tone: "success" as const }
+    : type === "ticket"
+      ? { icon: "🎫", tone: "blue" as const }
+      : type === "schedule"
+        ? { icon: "🗓", tone: "warning" as const }
+        : type === "cancellation"
+          ? { icon: "⚠", tone: "pink" as const }
+          : { icon: "📢", tone: "purple" as const };
+  const date = new Date(row.created_at);
+  const time = Number.isNaN(date.getTime()) ? "Baru saja" : date.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.message,
+    time,
+    read: Boolean(row.is_read),
+    ...style,
+  };
+}
 
 function getProfilePhoto(user: OrganizerUser | null) {
   if (!user?.profile_photo) return "/icons/user.png";
@@ -89,28 +122,34 @@ export default function OrganizerShell({
     setShowNotificationsPanel(false);
     setShowProfileMenu(false);
   }, [pathname]);
-  // TODO: sesuaikan endpoint & bentuk response dengan API notifikasi organizer kamu
   useEffect(() => {
     let cancelled = false;
     async function loadNotifications() {
       setNotificationsLoading(true);
       try {
         const token = localStorage.getItem("token");
+        if (!token) return;
         const res = await fetch(`${API_ORIGIN}/api/notifications`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          cache: "no-store",
         });
         if (!res.ok) throw new Error("Failed to load notifications");
         const data = await res.json();
-        if (!cancelled) setNotifications(data.notifications ?? data ?? []);
-      } catch {
+        const rows: ApiNotification[] = Array.isArray(data.notifications) ? data.notifications : [];
+        if (!cancelled) setNotifications(rows.map(mapNotification));
+      } catch (error) {
+        console.error("Load organizer notifications:", error);
         if (!cancelled) setNotifications([]);
       } finally {
         if (!cancelled) setNotificationsLoading(false);
       }
     }
     loadNotifications();
+    const refresh = () => loadNotifications();
+    window.addEventListener("focus", refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", refresh);
     };
   }, []);
   const profilePhoto = getProfilePhoto(user);
@@ -130,19 +169,36 @@ export default function OrganizerShell({
     [notifications, activeNotificationTab]
   );
   async function markAllNotificationsRead() {
-    if (unreadCount === 0) return;
+    if (unreadCount === 0 || notificationActionLoading) return;
     setNotificationActionLoading(true);
     try {
-      // TODO: panggil API "mark all as read" di sini
-      setNotifications((items) => items.map((i) => ({ ...i, read: true })));
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_ORIGIN}/api/notifications/read-all`, {
+        method: "PATCH",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("Gagal menandai notifikasi.");
+      setNotifications((items) => items.map((item) => ({ ...item, read: true })));
+    } catch (error) {
+      console.error("Mark all organizer notifications read:", error);
     } finally {
       setNotificationActionLoading(false);
     }
   }
-  function openNotification(item: NotificationItem) {
-    setNotifications((items) =>
-      items.map((i) => (i.id === item.id ? { ...i, read: true } : i))
-    );
+  async function openNotification(item: NotificationItem) {
+    if (!item.read) {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${API_ORIGIN}/api/notifications/${item.id}/read`, {
+          method: "PATCH",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error("Gagal memperbarui notifikasi.");
+        setNotifications((items) => items.map((i) => i.id === item.id ? { ...i, read: true } : i));
+      } catch (error) {
+        console.error("Mark organizer notification read:", error);
+      }
+    }
     setShowNotificationsPanel(false);
     router.push(item.href || "/organizer/notifications");
   }

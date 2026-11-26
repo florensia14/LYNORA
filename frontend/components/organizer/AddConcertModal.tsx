@@ -135,6 +135,15 @@ function getToken() {
   );
 }
 
+function formatPriceInput(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits ? Number(digits).toLocaleString("id-ID") : "";
+}
+
+function parsePriceInput(value: string) {
+  return value.replace(/\D/g, "");
+}
+
 function money(value: string | number) {
   return `Rp ${Number(value || 0).toLocaleString("id-ID")}`;
 }
@@ -197,6 +206,7 @@ export default function AddConcertModal({
 
   // Venue search
   const [venueQuery, setVenueQuery] = useState("");
+  const [venueAddress, setVenueAddress] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [geoResults, setGeoResults] = useState<any[]>([]);
@@ -328,7 +338,9 @@ export default function AddConcertModal({
           new URLSearchParams({
             format: "jsonv2",
             addressdetails: "1",
-            limit: "5",
+            namedetails: "1",
+            limit: "7",
+            countrycodes: "id",
             q: query,
           });
 
@@ -370,6 +382,7 @@ export default function AddConcertModal({
     update("venue_id", String(venue.id));
 
     setVenueQuery(venue.name);
+    setVenueAddress(venue.address || venue.name);
     setShowSuggestions(false);
 
     setExternalLocation(false);
@@ -391,21 +404,24 @@ export default function AddConcertModal({
   }
 
   function selectExternalLocation(place: any) {
-    const address = place.address || {};
-
     const point = {
       lat: Number(place.lat),
       lon: Number(place.lon),
     };
+
+    const resolvedName =
+      place.name ||
+      place.namedetails?.name ||
+      String(place.display_name || "").split(",")[0] ||
+      venueQuery.trim();
 
     setMapPoint(point);
     setSelectedVenue(null);
 
     update("venue_id", "");
 
-    setVenueQuery(
-      place.display_name.split(",")[0]
-    );
+    setVenueQuery(resolvedName);
+    setVenueAddress(place.display_name || resolvedName);
 
     setShowSuggestions(false);
     setExternalLocation(true);
@@ -414,38 +430,30 @@ export default function AddConcertModal({
   }
 
   // Match a manually selected map point to a registered venue.
-  function handleMapPick(position: Position) {
+  async function handleMapPick(position: Position) {
     setMapPoint(position);
-
-    const nearest = venues
-      .filter(
-        (venue) =>
-          venue.latitude != null &&
-          venue.longitude != null
-      )
-      .map((venue) => {
-        const distance = Math.sqrt(
-          Math.pow(Number(venue.latitude) - position.lat, 2) +
-          Math.pow(Number(venue.longitude) - position.lon, 2)
-        );
-
-        return {
-          venue,
-          distance,
-        };
-      })
-      .sort((a, b) => a.distance - b.distance)[0];
-
-    // Approximately 150-200 metres, depending on latitude.
-    if (nearest && nearest.distance < 0.0018) {
-      selectVenue(nearest.venue);
-      setMapPoint(position);
-      return;
-    }
-
+    setExternalLocation(true);
     setSelectedVenue(null);
     update("venue_id", "");
-    setExternalLocation(true);
+
+    try {
+      const reverseUrl = new URL("https://nominatim.openstreetmap.org/reverse");
+      reverseUrl.search = new URLSearchParams({
+        format: "jsonv2",
+        lat: String(position.lat),
+        lon: String(position.lon),
+        addressdetails: "1",
+        zoom: "18",
+      }).toString();
+      const reverseResponse = await fetch(reverseUrl.toString(), { headers: { Accept: "application/json" } });
+      if (reverseResponse.ok) {
+        const reverseResult = await reverseResponse.json();
+        if (reverseResult.display_name) setVenueAddress(reverseResult.display_name);
+      }
+    } catch (error) {
+      console.warn("Reverse geocoding failed:", error);
+    }
+
     setError("");
   }
 
@@ -509,8 +517,11 @@ export default function AddConcertModal({
     }
 
     if (step === 1) {
-      if (!form.venue_id || !selectedVenue) {
-        return "Pilih venue yang sudah terdaftar di database.";
+      if (!venueQuery.trim()) {
+        return "Masukkan nama venue atau lokasi konser.";
+      }
+      if (!mapPoint) {
+        return "Pilih lokasi venue dari hasil pencarian atau klik titik pada peta.";
       }
 
       if (
@@ -604,7 +615,11 @@ export default function AddConcertModal({
       body.append("name", form.name.trim());
       body.append("description", form.description.trim());
       body.append("category_id", form.category_id);
-      body.append("venue_id", form.venue_id);
+      body.append("venue_id", form.venue_id || "");
+      body.append("venue_name", venueQuery.trim());
+      body.append("venue_address", venueAddress.trim() || venueQuery.trim());
+      body.append("latitude", String(mapPoint?.lat ?? ""));
+      body.append("longitude", String(mapPoint?.lon ?? ""));
       body.append("artist_name", form.artist_name.trim());
       body.append("artist_country", form.artist_country.trim());
 
@@ -1042,13 +1057,13 @@ export default function AddConcertModal({
 
                       <div className="relative">
                         <label className={labelClass}>
-                          Search Venue / Location *
+                          Venue Name *
                         </label>
 
                         <div className="relative">
                           <input
                             className={`${inputClass} pr-10`}
-                            placeholder="Type venue name or address..."
+                            placeholder="Type venue name, e.g. GBK, JIS, ICE BSD..."
                             value={venueQuery}
                             onFocus={() => setShowSuggestions(true)}
                             onChange={(e) => {
@@ -1118,7 +1133,7 @@ export default function AddConcertModal({
                             {geoResults.length > 0 && (
                               <>
                                 <p className="px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-cyan-400">
-                                  Map Search Results
+                                  Venue Search Results
                                 </p>
 
                                 {geoResults.map((place) => (
@@ -1154,6 +1169,47 @@ export default function AddConcertModal({
                         )}
                       </div>
 
+                      <div className="space-y-3">
+                        <div>
+                          <label className={labelClass}>Venue Address *</label>
+                          <textarea
+                            rows={2}
+                            className={inputClass}
+                            placeholder="Address will be filled automatically after selecting a search result."
+                            value={venueAddress}
+                            onChange={(event) => setVenueAddress(event.target.value)}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelClass}>Latitude</label>
+                            <input
+                              className={inputClass}
+                              value={mapPoint ? mapPoint.lat.toFixed(7) : ""}
+                              placeholder="Auto-filled"
+                              onChange={(event) => {
+                                const lat = Number(event.target.value);
+                                if (event.target.value === "" || !Number.isFinite(lat)) return;
+                                setMapPoint((current) => ({ lat, lon: current?.lon ?? 0 }));
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label className={labelClass}>Longitude</label>
+                            <input
+                              className={inputClass}
+                              value={mapPoint ? mapPoint.lon.toFixed(7) : ""}
+                              placeholder="Auto-filled"
+                              onChange={(event) => {
+                                const lon = Number(event.target.value);
+                                if (event.target.value === "" || !Number.isFinite(lon)) return;
+                                setMapPoint((current) => ({ lat: current?.lat ?? 0, lon }));
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
                       {selectedVenue ? (
                         <div className="rounded-xl border border-emerald-500/30 bg-[#102A27] p-3">
                           <div className="flex items-center gap-2">
@@ -1182,8 +1238,8 @@ export default function AddConcertModal({
                         <div className="rounded-lg border border-amber-400/20 bg-amber-400/5 p-3">
                           <p className="text-[10px] leading-relaxed text-amber-200">
                             {externalLocation
-                              ? "Location preview only. This location is not registered as a venue yet. Select a registered venue to continue."
-                              : "Choose a registered venue. Its ID will be assigned automatically."}
+                              ? "Venue location selected. This location will be saved automatically when you submit the concert."
+                              : "Search for a venue or type its name, then select a location on the map."}
                           </p>
                         </div>
                       )}
@@ -1212,7 +1268,7 @@ export default function AddConcertModal({
                       />
 
                       <p className="text-[10px] text-slate-500">
-                        Click on the map to select a location. A registered venue must be matched before submission.
+                        Click the map to set the exact venue location. Registered venues are optional.
                       </p>
 
                       {mapPoint && (
@@ -1851,15 +1907,16 @@ export default function AddConcertModal({
                   </label>
 
                   <input
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
                     className={inputClass}
-                    placeholder="350000"
-                    value={ticketForm.price}
+                    placeholder="350.000"
+                    value={formatPriceInput(ticketForm.price)}
                     onChange={(e) =>
                       setTicketForm((old) => ({
                         ...old,
-                        price: e.target.value,
+                        price: parsePriceInput(e.target.value),
                       }))
                     }
                   />

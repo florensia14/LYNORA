@@ -2,6 +2,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/database");
+const { sendOrganizerAccountEmail } = require("../services/eticketEmailService");
 
 function createToken(user) {
   return jwt.sign(
@@ -396,9 +397,33 @@ async function createAdminUser(req, res) {
 
     await connection.commit();
 
+    // Send an account notification only for Event Organizer accounts.
+    // Email delivery failure does not roll back the account creation.
+    let emailSent = null;
+    if (cleanRole === "organizer") {
+      try {
+        await sendOrganizerAccountEmail({
+          name: cleanName,
+          organizationName: cleanOrganization,
+          email: cleanEmail,
+          password: String(password),
+        });
+        emailSent = true;
+      } catch (emailError) {
+        emailSent = false;
+        console.error("[organizer-email] Failed to send account email:", emailError);
+      }
+    }
+
     return res.status(201).json({
       success: true,
-      message: "Akun berhasil dibuat dan diaktifkan.",
+      message:
+        cleanRole === "organizer"
+          ? emailSent
+            ? "Organizer account created successfully. The notification email has been sent."
+            : "Organizer account created successfully, but the notification email could not be sent. Please check the SMTP configuration."
+          : "Account created and activated successfully.",
+      email_sent: emailSent,
       user: {
         id: result.insertId,
         name: cleanName,

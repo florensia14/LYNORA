@@ -3,9 +3,12 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import AddConcertModal from "@/components/organizer/AddConcertModal";
 import OrganizerPageHero from "@/components/layout/OrganizerPageHero";
+
+const VenueMap = dynamic(() => import("@/components/organizer/VenueMap"), { ssr: false });
 
 const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api")
   .replace(/\/api\/?$/, "").replace(/\/$/, "");
@@ -23,7 +26,7 @@ const toSqlDateTime = (value: string) => value ? `${value.replace("T", " ")}:00`
 type Option = { id: number; name: string };
 type Concert = {
   id: number; title: string; description: string; poster: string;
-  categoryId: number | string; venueId: number | string;
+  categoryId: number | string; venueId: number | string; venueName?: string; venueAddress?: string; latitude?: number | null; longitude?: number | null;
   startDate: string; endDate: string; salesStartAt: string; salesEndAt: string;
   status: string;
 };
@@ -39,6 +42,10 @@ function EditConcertModal({
     description: concert.description || "",
     category_id: String(concert.categoryId || ""),
     venue_id: String(concert.venueId || ""),
+    venue_name: concert.venueName || "",
+    venue_address: concert.venueAddress || "",
+    latitude: concert.latitude == null ? "" : String(concert.latitude),
+    longitude: concert.longitude == null ? "" : String(concert.longitude),
     start_date: toLocalInput(concert.startDate),
     end_date: toLocalInput(concert.endDate),
     sales_start_at: toLocalInput(concert.salesStartAt),
@@ -51,6 +58,9 @@ function EditConcertModal({
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [venueSearchResults, setVenueSearchResults] = useState<any[]>([]);
+  const [venueSearching, setVenueSearching] = useState(false);
+  const [showVenueResults, setShowVenueResults] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -73,6 +83,63 @@ function EditConcertModal({
   }, []);
 
   useEffect(() => {
+    const query = form.venue_name.trim();
+    if (query.length < 2) {
+      setVenueSearchResults([]);
+      setVenueSearching(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setVenueSearching(true);
+      try {
+        const params = new URLSearchParams({
+          format: "jsonv2",
+          addressdetails: "1",
+          namedetails: "1",
+          countrycodes: "id",
+          limit: "7",
+          q: query,
+        });
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Venue search failed");
+        const results = await response.json();
+        setVenueSearchResults(Array.isArray(results) ? results : []);
+      } catch (searchError) {
+        if (!(searchError instanceof Error) || searchError.name !== "AbortError") {
+          setVenueSearchResults([]);
+        }
+      } finally {
+        setVenueSearching(false);
+      }
+    }, 650);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [form.venue_name]);
+
+  function selectVenueLocation(place: any) {
+    const name = place.name || place.namedetails?.name || String(place.display_name || "").split(",")[0];
+    setForm((current) => ({
+      ...current,
+      venue_id: "",
+      venue_name: name || current.venue_name,
+      venue_address: place.display_name || name || current.venue_address,
+      latitude: String(Number(place.lat)),
+      longitude: String(Number(place.lon)),
+    }));
+    setVenueSearchResults([]);
+    setShowVenueResults(false);
+    setError("");
+  }
+
+  useEffect(() => {
     if (!poster) return;
     const url = URL.createObjectURL(poster);
     setPreview(url);
@@ -86,7 +153,7 @@ function EditConcertModal({
   async function save() {
     setError("");
     if (!form.name.trim() || !form.description.trim() || !form.category_id ||
-        !form.venue_id || !form.start_date || !form.end_date) {
+        !form.venue_name.trim() || !form.venue_address.trim() || !form.start_date || !form.end_date) {
       setError("Please complete all required fields.");
       return;
     }
@@ -120,8 +187,11 @@ function EditConcertModal({
         description: form.description,
         category_id: Number(form.category_id),
         category_name: categories.find((item) => String(item.id) === form.category_id)?.name || "Other",
-        venue_id: Number(form.venue_id),
-        venue_name: venues.find((item) => String(item.id) === form.venue_id)?.name || "-",
+        venue_id: result.event?.venue_id || Number(form.venue_id) || null,
+        venue_name: form.venue_name,
+        venue_address: form.venue_address,
+        latitude: form.latitude === "" ? null : Number(form.latitude),
+        longitude: form.longitude === "" ? null : Number(form.longitude),
         start_date: form.start_date,
         end_date: form.end_date,
         sales_start_at: form.sales_start_at,
@@ -199,13 +269,45 @@ function EditConcertModal({
                 {categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </div>
-            <div>
-              <label className={labelClass}>Venue <span className="text-rose-400">*</span></label>
-              <select className={inputClass} value={form.venue_id} disabled={loadingOptions}
-                onChange={(e) => change("venue_id", e.target.value)}>
-                <option value="">Select venue</option>
-                {venues.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
+            <div className="sm:col-span-2">
+              <label className={labelClass}>Venue name <span className="text-rose-400">*</span></label>
+              <div className="relative">
+                <input className={inputClass} value={form.venue_name} placeholder="Type venue name, e.g. GBK, JIS, ICE BSD..."
+                  onFocus={() => setShowVenueResults(true)}
+                  onChange={(e) => {
+                    setForm((current) => ({ ...current, venue_name: e.target.value, venue_id: "", venue_address: "", latitude: "", longitude: "" }));
+                    setShowVenueResults(true);
+                  }} />
+                {showVenueResults && (venueSearching || venueSearchResults.length > 0) && (
+                  <div className="absolute left-0 right-0 top-full z-[600] mt-1 max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-[#11132D] shadow-2xl">
+                    {venueSearching && <p className="px-3 py-2 text-xs text-slate-400">Searching venues in Indonesia...</p>}
+                    {venueSearchResults.map((place: any) => (
+                      <button key={place.place_id} type="button" onClick={() => selectVenueLocation(place)}
+                        className="block w-full border-b border-white/5 px-3 py-2.5 text-left hover:bg-[#29204D]">
+                        <span className="block text-xs font-semibold text-white">{place.name || place.namedetails?.name || String(place.display_name).split(",")[0]}</span>
+                        <span className="mt-1 block text-[10px] leading-relaxed text-slate-400">{place.display_name}</span>
+                      </button>
+                    ))}
+                    {!venueSearching && venueSearchResults.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">No locations found in Indonesia.</p>}
+                  </div>
+                )}
+              </div>
+              <label className={`${labelClass} mt-3 block`}>Venue address <span className="text-rose-400">*</span></label>
+              <textarea rows={2} className={inputClass} value={form.venue_address} placeholder="Automatically filled after selecting a venue result" onChange={(e) => change("venue_address", e.target.value)} />
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div><label className={labelClass}>Latitude</label><input className={inputClass} value={form.latitude} placeholder="Auto-filled from venue" onChange={(e) => change("latitude", e.target.value)} /></div>
+                <div><label className={labelClass}>Longitude</label><input className={inputClass} value={form.longitude} placeholder="Auto-filled from venue" onChange={(e) => change("longitude", e.target.value)} /></div>
+              </div>
+              <div className="mt-4">
+                <label className={labelClass}>Select venue point on map</label>
+                <div className="mt-2">
+                  <VenueMap
+                    position={form.latitude !== "" && form.longitude !== "" ? { lat: Number(form.latitude), lon: Number(form.longitude) } : null}
+                    onPick={(point) => setForm((current) => ({ ...current, latitude: String(point.lat), longitude: String(point.lon) }))}
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">Click the map to update the venue coordinates. The saved point is shown to customers.</p>
             </div>
             <div>
               <label className={labelClass}>Start date & time <span className="text-rose-400">*</span></label>
@@ -324,6 +426,10 @@ function normalizeConcert(raw) {
     description: raw.description || "",
     categoryId: raw.category_id || "",
     venueId: raw.venue_id || "",
+    venueName: raw.venue_name || "",
+    venueAddress: raw.venue_address || "",
+    latitude: raw.latitude == null ? null : Number(raw.latitude),
+    longitude: raw.longitude == null ? null : Number(raw.longitude),
     startDate: raw.start_date || "",
     endDate: raw.end_date || "",
     salesStartAt: raw.sales_start_at || "",
