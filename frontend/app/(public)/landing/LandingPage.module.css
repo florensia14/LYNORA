@@ -1,0 +1,102 @@
+:global(html) {
+    scroll-behavior: smooth;
+    scroll-padding-top: 100px;
+    /* header is ~92px tall */
+}
+
+.landingPage :global(details summary::-webkit-details-marker) {
+    display: none;
+}
+
+.landingPage :global(details[open] summary img) {
+    transform: rotate(180deg);
+}
+
+.landingPage {
+    width: 100%;
+}
+
+.landingPage #events {
+    padding-top: 48px;
+    padding-bottom: 28px;
+}
+
+.landingPage #trending {
+    padding-top: 28px;
+}
+
+@media (max-width: 900px) {
+
+    .landingPage section {
+        padding-left: 5% !important;
+        padding-right: 5% !important;
+    }
+
+    .landingPage :global(.stats-grid),
+
+    .landingPage :global(.features-grid) {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .landingPage :global(.category-grid) {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+
+    .landingPage :global(.featured-grid) {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .landingPage :global(.how-it-works-grid) {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        row-gap: 30px !important;
+    }
+
+    .landingPage #contact {
+        grid-template-columns: 1fr !important;
+        gap: 35px !important;
+    }
+}
+
+@media (max-width: 600px) {
+
+    .landingPage section {
+        padding-top: 48px !important;
+        padding-bottom: 48px !important;
+    }
+
+    .landingPage :global(.features-grid) {
+        grid-template-columns: 1fr !important;
+    }
+
+    .landingPage :global(.category-grid) {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 10px !important;
+    }
+
+    .landingPage :global(.featured-grid) {
+        grid-template-columns: 1fr !important;
+        max-width: 430px !important;
+    }
+
+    .landingPage :global(.steps-connector) {
+        display: none !important;
+    }
+
+    .landingPage #contact form {
+        grid-template-columns: 1fr !important;
+    }
+
+    .landingPage #contact form label {
+        grid-column: 1 / -1 !important;
+    }
+
+    .landingPage #faq summary {
+        padding: 15px !important;
+    }
+
+    .landingPage #home {
+        min-height: 520px !important;
+        padding-top: 55px !important;
+        padding-bottom: 55px !important;
+    }
+}
