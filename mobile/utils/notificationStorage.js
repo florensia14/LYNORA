@@ -1,28 +1,32 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { INITIAL_NOTIFICATIONS } from '../data/notifications';
+import { fetchNotifications } from '../services/notificationService';
 
-const STORAGE_KEY = '@lynora/notifications';
+let current = [];
 const listeners = new Set();
 
-export async function loadNotifications() {
-  const storedNotifications = await AsyncStorage.getItem(STORAGE_KEY);
-  if (!storedNotifications) {
-    return INITIAL_NOTIFICATIONS.map((notification) => ({ ...notification }));
-  }
-
-  const notifications = JSON.parse(storedNotifications);
-  if (!Array.isArray(notifications)) {
-    throw new Error('Data notifikasi tersimpan tidak valid.');
-  }
-  return notifications;
-}
-
-export async function saveNotifications(notifications) {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(notifications));
-  listeners.forEach((listener) => listener(notifications));
+export function getNotificationSnapshot() {
+  return current;
 }
 
 export function subscribeToNotificationChanges(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+export function publishNotifications(items) {
+  current = Array.isArray(items) ? items : [];
+  listeners.forEach((listener) => listener(current));
+}
+
+export async function refreshNotifications() {
+  const items = await fetchNotifications();
+  publishNotifications(items);
+  return items;
+}
+
+export function updateNotificationRead(id) {
+  publishNotifications(current.map((item) => item.id === id ? { ...item, unread: false } : item));
+}
+
+export function updateAllNotificationsRead() {
+  publishNotifications(current.map((item) => ({ ...item, unread: false })));
 }

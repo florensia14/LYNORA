@@ -6,15 +6,6 @@ const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/ap
     .replace(/\/$/, "");
 const API_URL = `${API_ORIGIN}/api`;
 const ICON_PATH = "/images/categories/";
-const CATEGORY_DEFINITIONS = [
-    { name: "POP", aliases: ["pop"], icon: "microphone.png" },
-    { name: "ROCK", aliases: ["rock"], icon: "hand.png" },
-    { name: "HIP-HOP", aliases: ["hip-hop", "hip hop", "hiphop"], icon: "boombox.png" },
-    { name: "EDM", aliases: ["edm"], icon: "technology.png" },
-    { name: "KPOP", aliases: ["kpop", "k-pop", "k pop"], icon: "disco-ball.png" },
-    { name: "INDIE", aliases: ["indie"], icon: "wave-sound.png" },
-    { name: "festivall", aliases: ["festivall", "festival"], icon: "festival.png" },
-] as const;
 const PAGE_SIZE = 8;
 const ICONS = {
     category: "/icons/category.png",
@@ -40,31 +31,29 @@ type Category = {
 type CategoryForm = {
     name: string;
     description: string;
+    icon: string;
+    iconFile: File | null;
     status: "active" | "inactive";
 };
+
 const EMPTY_FORM: CategoryForm = {
     name: "",
     description: "",
+    icon: "",
+    iconFile: null,
     status: "active",
 };
+
 function PngIcon({ src, size = 16 }: {
     src: string;
     size?: number;
 }) {
     return (<img src={src} alt="" aria-hidden="true" width={size} height={size} className="shrink-0 object-contain"/>);
 }
-function getCategoryDefinition(name: string) {
-    const key = name.trim().toLowerCase();
-    return CATEGORY_DEFINITIONS.find((item) => (item.aliases as readonly string[]).includes(key));
-}
 function getCategoryIcon(category: Category | string) {
-    const name = typeof category === "string" ? category : category.name;
-    const definition = getCategoryDefinition(name);
-    if (definition)
-        return `${ICON_PATH}${definition.icon}`;
     const savedIcon = typeof category === "string" ? null : category.icon;
     if (savedIcon) {
-        return savedIcon.startsWith("/") ? savedIcon : `${ICON_PATH}${savedIcon}`;
+        return savedIcon.startsWith("http") ? savedIcon : savedIcon.startsWith("/uploads/") ? `${API_ORIGIN}${savedIcon}` : savedIcon.startsWith("/") ? savedIcon : `${ICON_PATH}${savedIcon}`;
     }
     return `${ICON_PATH}category (1).png`;
 }
@@ -93,12 +82,12 @@ async function apiRequest<T>(path: string, options: {
     const headers: Record<string, string> = {};
     if (token)
         headers.Authorization = `Bearer ${token}`;
-    if (options.body)
+    if (options.body && !(options.body instanceof FormData))
         headers["Content-Type"] = "application/json";
     const response = await fetch(`${API_URL}${path}`, {
         method: options.method || "GET",
         headers,
-        body: options.body ? JSON.stringify(options.body) : undefined,
+        body: options.body ? (options.body instanceof FormData ? options.body : JSON.stringify(options.body)) : undefined,
         cache: "no-store",
     });
     const payload = await response.json().catch(() => null);
@@ -225,35 +214,17 @@ function CategoryModal({ open, editing, form, saving, error, onChange, onClose, 
           </div>
 
           <div>
-
-            <label className="mb-1.5 block text-xs font-semibold text-slate-300">
-
-              Category Icon
-
-            </label>
-
+            <label className="mb-1.5 block text-xs font-semibold text-slate-300">Category Icon</label>
             <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-[#0B1122] p-3">
-
-              <CategoryIcon category={editing || form.name || "Category"} size={42}/>
-
-              <div>
-
-                <p className="text-xs font-semibold text-white">
-
-                  {form.name || "Category Preview"}
-
-                </p>
-
-                <p className="mt-1 text-[10px] text-slate-500">
-
-                  Automatically assigned from the category icon library.
-
-                </p>
-
+              <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/10 bg-[#211A42] p-1.5">
+                {form.iconFile ? <img src={URL.createObjectURL(form.iconFile)} alt="Icon preview" className="h-full w-full object-contain" /> : form.icon ? <img src={form.icon.startsWith("http") ? form.icon : `${API_ORIGIN}${form.icon.startsWith("/") ? "" : "/uploads/categories/"}${form.icon}`} alt="Current category icon" className="h-full w-full object-contain" /> : <PngIcon src={ICONS.category} size={24} />}
               </div>
-
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-white">{form.iconFile?.name || (form.icon ? form.icon.split("/").pop() : "No icon selected")}</p>
+                <p className="mt-1 text-[10px] text-slate-500">Upload PNG, JPG, JPEG, or WEBP (max 2 MB).</p>
+                <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => onChange({ ...form, iconFile: e.target.files?.[0] || null })} className="mt-2 block w-full text-[10px] text-slate-300 file:mr-2 file:rounded-md file:border-0 file:bg-[#7046C8] file:px-3 file:py-1.5 file:text-[10px] file:font-semibold file:text-white" />
+              </div>
             </div>
-
           </div>
 
           <div>
@@ -504,6 +475,8 @@ export default function ManageCategoriesPage() {
         setForm({
             name: category.name,
             description: category.description || "",
+            icon: category.icon || "",
+            iconFile: null,
             status: category.status,
         });
         setFormError("");
@@ -517,22 +490,17 @@ export default function ManageCategoriesPage() {
         setSaving(true);
         setFormError("");
         try {
-            const payload = {
-                name: form.name.trim(),
-                description: form.description.trim(),
-                status: form.status,
-            };
+            const payload = new FormData();
+            payload.append("name", form.name.trim());
+            payload.append("description", form.description.trim());
+            payload.append("status", form.status);
+            if (form.iconFile) payload.append("icon", form.iconFile);
+            if (editing && !form.iconFile && form.icon) payload.append("existingIcon", form.icon);
             if (editing) {
-                await apiRequest(`/categories/admin/${editing.id}`, {
-                    method: "PUT",
-                    body: payload,
-                });
-            }
-            else {
-                await apiRequest("/categories/admin", {
-                    method: "POST",
-                    body: payload,
-                });
+                await apiRequest(`/categories/admin/${editing.id}`, { method: "PUT", body: payload });
+            } else {
+                if (!form.iconFile) throw new Error("Please choose a category icon file.");
+                await apiRequest("/categories/admin", { method: "POST", body: payload });
             }
             setModalOpen(false);
             await loadCategories();

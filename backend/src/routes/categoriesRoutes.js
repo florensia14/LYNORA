@@ -1,6 +1,7 @@
 const express = require("express");
 const authenticateToken = require("../middlewares/authMiddleware");
 const authorizeRoles = require("../middlewares/authorizeRoles");
+const upload = require("../middlewares/uploadMiddleware");
 const {
   getPublicCategories,
   getAdminCategories,
@@ -16,8 +17,20 @@ router.get("/public", getPublicCategories);
 
 // Super Admin category management.
 router.get("/admin", authenticateToken, authorizeRoles("super_admin"), getAdminCategories);
-router.post("/admin", authenticateToken, authorizeRoles("super_admin"), createCategory);
-router.put("/admin/:id", authenticateToken, authorizeRoles("super_admin"), updateCategory);
+router.post(
+  "/admin",
+  authenticateToken,
+  authorizeRoles("super_admin"),
+  upload.uploadCategoryIcon.single("icon"),
+  createCategory
+);
+router.put(
+  "/admin/:id",
+  authenticateToken,
+  authorizeRoles("super_admin"),
+  upload.uploadCategoryIcon.single("icon"),
+  updateCategory
+);
 router.delete("/admin/:id", authenticateToken, authorizeRoles("super_admin"), deleteCategory);
 
 module.exports = router;

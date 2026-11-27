@@ -1,13 +1,11 @@
-
 import React, { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, StatusBar } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AppNavigation from './navigation/AppNavigation';
 
 export default function App() {
   useEffect(() => {
-    if (Platform.OS !== 'web' || typeof document === 'undefined') {
-      return undefined;
-    }
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
 
     const autofillStyle = document.createElement('style');
     autofillStyle.textContent = `
@@ -21,11 +19,15 @@ export default function App() {
       }
     `;
     document.head.appendChild(autofillStyle);
-
-    return () => {
-      document.head.removeChild(autofillStyle);
-    };
+    return () => document.head.removeChild(autofillStyle);
   }, []);
 
-  return <AppNavigation />;
+  return (
+    <SafeAreaProvider>
+      <StatusBar barStyle="light-content" backgroundColor="#0B1122" translucent={false} />
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#0B1122' }} edges={['top']}>
+        <AppNavigation />
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
 }

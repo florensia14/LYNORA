@@ -367,7 +367,7 @@ export default function CustomerShell({
       <div className="cust-main min-h-screen min-w-0 w-full pt-14 lg:pt-0">
         <header
           data-page={title.toLowerCase()}
-          className="sticky top-14 z-30 w-full border-b border-white/[0.07] bg-[linear-gradient(90deg,#0D1328_0%,#162140_25%,#1E2B54_50%,#141C3D_70%,#0B1122_100%)] px-3 py-2.5 backdrop-blur-xl sm:px-5 lg:top-0 lg:px-5 lg:py-2.5 xl:px-6"
+          className="sticky top-14 z-[500] w-full border-b border-white/[0.07] bg-[linear-gradient(90deg,#0D1328_0%,#162140_25%,#1E2B54_50%,#141C3D_70%,#0B1122_100%)] px-3 py-2.5 backdrop-blur-xl sm:px-5 lg:top-0 lg:px-5 lg:py-2.5 xl:px-6"
         >
           <div
             className={`grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2.5 lg:gap-x-3 lg:gap-y-0 xl:gap-x-4 ${

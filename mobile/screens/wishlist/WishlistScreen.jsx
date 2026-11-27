@@ -1,650 +1,561 @@
-﻿
-import React, { useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  ImageBackground,
-  StatusBar,
+  View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
+  Image, ImageBackground, StatusBar, ActivityIndicator, Alert,
+  RefreshControl, useWindowDimensions,
 } from 'react-native';
-
+import { useFocusEffect } from '@react-navigation/native';
 import {
-  Search,
-  Heart,
-  ChevronDown,
-  SlidersHorizontal,
-  MapPin,
-  CalendarDays,
-  Ticket,
-  Home,
-  Compass,
-  Wallet,
-  Trash2,
+  Search, Heart, ChevronDown, MapPin, CalendarDays, Ticket,
+  Trash2, Music2, X,
 } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import HeaderActions from '../../components/HeaderActions';
+import {
+  fetchHomeConcerts, fetchHomeCategories, fetchHomeWishlist, setHomeWishlist,
+} from '../../services/homeService';
+import { subscribeWishlist, publishWishlistIds } from '../../services/wishlistStore';
 
-const COLORS = {
-  background: '#080D1C',
-  card: '#111A30',
-  purple: '#7047F5',
-  purpleLight: '#A78BFA',
+const C = {
+  bg: '#0B1020',
+  card: '#151E36',
+  card2: '#202A4F',
+  purple: '#8B5CF6',
+  cyan: '#22D3EE',
+  primary: '#5456DE',
+  red: '#C30437',
   white: '#FFFFFF',
   muted: '#929BB2',
-  border: '#27314B',
-  green: '#20C997',
-  red: '#F04472',
+  border: 'rgba(139,92,246,0.28)',
+  green: '#26ADA0',
 };
 
-const initialConcerts = [
-  {
-    id: 1,
-    name: 'LANY â€” Soft World Tour',
-    category: 'Indie Pop',
-    type: 'Arena Tour',
-    date: '30 Okt 2026, 19:00 WIB',
-    location: 'Indonesian Arena, Jakarta Pusat',
-    organizer: 'Live Entertainment',
-    price: 'Rp 850.000+',
-    status: 'ON SALE',
-    image:
-      'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=900',
-  },
-  {
-    id: 2,
-    name: 'Avenged Sevenfold',
-    category: 'Metal',
-    type: 'World Tour',
-    date: '09 Nov 2026, 19:00 WIB',
-    location: 'Jakarta International Stadium',
-    organizer: 'Music Production',
-    price: 'Rp 605.000+',
-    status: 'NEW',
-    image:
-      'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=900',
-  },
-  {
-    id: 3,
-    name: 'BLACKPINK WORLD TOUR',
-    category: 'K-Pop',
-    type: 'World Tour 2026',
-    date: '19â€“21 Nov 2026',
-    location: 'Gelora Bung Karno',
-    organizer: 'YG Entertainment',
-    price: 'Rp 1.250.000+',
-    status: 'HOT',
-    image:
-      'https://images.unsplash.com/photo-1506157786151-b8491531f063?w=900',
-  },
-  {
-    id: 4,
-    name: 'Synchronize Fest 2026',
-    category: 'Multi Genre',
-    type: 'Music Festival',
-    date: '05 Des 2026',
-    location: 'Gambir Expo, Jakarta',
-    organizer: 'Synchronize Festival',
-    price: 'Rp 450.000+',
-    status: 'ON SALE',
-    image:
-      'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=900',
-  },
+const TABS = [
+  { value: 'all', label: 'All Saved' },
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'past', label: 'Past Events' },
 ];
 
-export default function WishlistScreen({ navigation }) {
-  const [concerts, setConcerts] = useState(initialConcerts);
-  const [activeTab, setActiveTab] = useState('Wishlist');
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('Semua');
-  const [sortVisible, setSortVisible] = useState(false);
+const ICONS = {
+  calendar: require('../../assets/icons/calendar (1).png'),
+  flag: require('../../assets/icons/flag.png'),
+  pin: require('../../assets/icons/pin.png'),
+  organizer: require('../../assets/icons/circus.png'),
+  wish: require('../../assets/icons/wishlist.png'),
+  wishActive: require('../../assets/icons/wishlist(1).png'),
+};
 
-  const filteredConcerts = concerts.filter((concert) => {
-    const matchSearch = concert.name
-      .toLowerCase()
-      .includes(search.toLowerCase());
+const getDate = (event) => {
+  const value = event.start_date || event.event_date || event.date;
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
-    const matchCategory =
-      category === 'Semua' || concert.category === category;
+const formatDate = (value) => {
+  const date = getDate({ start_date: value });
+  if (!date) return 'Date to be announced';
+  return new Intl.DateTimeFormat('id-ID', {
+    weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta',
+  }).format(date);
+};
 
-    return matchSearch && matchCategory;
-  });
+const formatPrice = (value) => {
+  if (value == null || !Number.isFinite(Number(value))) return 'Price unavailable';
+  return `Rp ${Number(value).toLocaleString('id-ID')}`;
+};
 
-  const removeConcert = (id) => {
-    setConcerts((current) =>
-      current.filter((concert) => concert.id !== id)
-    );
-  };
+const getStatus = (event) => {
+  const lifecycle = String(event.lifecycle_status || '').toLowerCase();
+  const sales = String(event.sales_status || '').toLowerCase();
+  if (lifecycle === 'ongoing') return { label: 'LIVE NOW', color: C.green, bg: '#152B32' };
+  if (lifecycle === 'completed' || sales === 'ended') return { label: 'PAST EVENT', color: '#B8C0D4', bg: '#292F42' };
+  if (sales === 'coming_soon') return { label: 'COMING SOON', color: '#F5B84E', bg: '#2E2723' };
+  if (sales === 'sold_out') return { label: 'SOLD OUT', color: '#FF8298', bg: '#3A202B' };
+  return { label: 'ON SALE', color: C.green, bg: '#152B32' };
+};
 
-  const renderConcert = (concert) => (
-    <View style={styles.concertCard} key={concert.id}>
-      <ImageBackground
-        source={{ uri: concert.image }}
-        style={styles.concertImage}
-        imageStyle={styles.imageRadius}
-      >
-        <View style={styles.imageOverlay} />
-
-        <View style={styles.imageTop}>
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusText}>{concert.status}</Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.heartButton}
-            onPress={() => removeConcert(concert.id)}
-          >
-            <Heart size={19} color="#FFFFFF" fill="#F04472" />
-          </TouchableOpacity>
+function Dropdown({ label, value, options, open, onToggle, onSelect }) {
+  return (
+    <View style={[styles.dropdownWrap, open && styles.dropdownWrapOpen]}>
+      <TouchableOpacity style={styles.dropdownButton} onPress={onToggle} activeOpacity={0.85}>
+        <Text numberOfLines={1} style={styles.dropdownValue}>{value}</Text>
+        <ChevronDown size={16} color="#D7D9E5" />
+      </TouchableOpacity>
+      {open ? (
+        <View style={styles.dropdownMenu}>
+          <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} style={{ maxHeight: 220 }}>
+            {options.map((option) => (
+              <TouchableOpacity key={String(option.value)} style={styles.dropdownOption} onPress={() => onSelect(option.value)}>
+                <Text style={[styles.dropdownOptionText, String(option.value) === String(label) && styles.dropdownOptionActive]}>
+                  {option.label}
+                </Text>
+                {String(option.value) === String(label) ? <Text style={styles.check}>✓</Text> : null}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
-
-        <View style={styles.priceBadge}>
-          <Text style={styles.priceText}>{concert.price}</Text>
-        </View>
-      </ImageBackground>
-
-      <View style={styles.cardContent}>
-        <Text style={styles.concertName}>{concert.name}</Text>
-
-        <Text style={styles.concertCategory}>
-          {concert.category} â€¢ {concert.type}
-        </Text>
-
-        <Text style={styles.description}>
-          Nikmati penampilan musik secara langsung dan rasakan
-          pengalaman konser yang tidak terlupakan.
-        </Text>
-
-        <View style={styles.infoRow}>
-          <CalendarDays size={14} color={COLORS.muted} />
-          <Text style={styles.infoText}>{concert.date}</Text>
-        </View>
-
-        <View style={styles.infoRow}>
-          <MapPin size={14} color={COLORS.muted} />
-          <Text style={styles.infoText}>{concert.location}</Text>
-        </View>
-
-        <View style={styles.infoRow}>
-          <Ticket size={14} color={COLORS.muted} />
-          <Text style={styles.infoText}>
-            Organized by: {concert.organizer}
-          </Text>
-        </View>
-
-        <View style={styles.cardDivider} />
-
-        <View style={styles.cardFooter}>
-          <Text style={styles.availableText}>
-            â€¢ Tiket Tersedia
-          </Text>
-
-          <View style={styles.actionButtons}>
-            <TouchableOpacity
-              style={styles.buyButton}
-              onPress={() => navigation.navigate('Explore')}
-            >
-              <Text style={styles.buyButtonText}>Beli Tiket</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.detailButton}
-              onPress={() => navigation.navigate('Explore')}
-            >
-              <Text style={styles.detailButtonText}>Detail</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+      ) : null}
     </View>
   );
+}
 
+function WishlistCard({ event, width, onRemove, navigation, busy }) {
+  const status = getStatus(event);
+  const image = event.poster_url || event.hero_image_url || event.image_url;
+  const openDetail = () => navigation.navigate('ConcertDetail', { concert: {
+    ...event,
+    title: event.name,
+    image,
+    category: event.category_name,
+    location: event.venue_name,
+    organizer: event.organizer_name,
+    price: event.price,
+  } });
+
+  return (
+    <TouchableOpacity activeOpacity={0.9} style={[styles.eventCard, { width }]} onPress={openDetail}>
+      <View style={styles.posterWrap}>
+        {image ? (
+          <Image source={{ uri: image }} style={styles.poster} resizeMode="cover" />
+        ) : (
+          <LinearGradient colors={['#242447', '#202A4F', '#11182C']} style={styles.posterFallback}>
+            <Text style={styles.fallbackBrand}>LYNORA</Text>
+            <Text style={styles.posterFallbackText} numberOfLines={2}>{event.name}</Text>
+            <Text style={styles.fallbackTag}>LIVE EXPERIENCE</Text>
+          </LinearGradient>
+        )}
+        <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
+          <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+        </View>
+        <TouchableOpacity style={styles.heartButton} onPress={() => onRemove(event)} disabled={busy} activeOpacity={0.8}>
+          {busy ? <ActivityIndicator size="small" color="#FF6B91" /> : (
+            <Image source={ICONS.wishActive} style={styles.wishlistIcon} resizeMode="contain" />
+          )}
+        </TouchableOpacity>
+        <View style={styles.priceBadge}><Text style={styles.priceText}>{formatPrice(event.price)}</Text></View>
+      </View>
+
+      <View style={styles.cardContent}>
+        <Text style={styles.cardLabel}>SAVED CONCERT</Text>
+        <Text style={styles.eventName} numberOfLines={2}>{event.name}</Text>
+        <Text style={styles.categoryText}>{event.category_name || 'Live Concert'}</Text>
+        <Text style={styles.description} numberOfLines={2}>
+          {event.description || (event.venue_name ? `Enjoy an unforgettable live concert experience at ${event.venue_name}.` : 'Enjoy an unforgettable live concert experience.')}
+        </Text>
+        <View style={styles.cardDivider} />
+        <View style={styles.infoList}>
+          <View style={styles.infoRow}>
+            <Image source={ICONS.calendar} style={styles.infoIcon} resizeMode="contain" />
+            <Text style={styles.infoText} numberOfLines={2}>{formatDate(event.start_date)}</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Image source={ICONS.flag} style={styles.infoIcon} resizeMode="contain" />
+            <Text style={styles.infoText} numberOfLines={2}>From: {event.artist_country || 'To be announced'}</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Image source={ICONS.pin} style={styles.infoIcon} resizeMode="contain" />
+            <Text style={styles.infoText} numberOfLines={2}>{event.venue_name || 'Venue to be announced'}{event.venue_address ? `, ${event.venue_address}` : ''}</Text>
+          </View>
+          {event.organizer_name ? (
+            <View style={styles.infoRow}>
+              <Image source={ICONS.organizer} style={styles.infoIcon} resizeMode="contain" />
+              <Text style={styles.infoText} numberOfLines={1}>Organized by: {event.organizer_name}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+export default function WishlistScreen({ navigation }) {
+  const { width } = useWindowDimensions();
+  const [events, setEvents] = useState([]);
+  const [allConcerts, setAllConcerts] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [savedIds, setSavedIds] = useState([]);
+  const [activeTab, setActiveTab] = useState('all');
+  const [search, setSearch] = useState('');
+  const [categoryId, setCategoryId] = useState('all');
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyIds, setBusyIds] = useState([]);
+  const [removingAll, setRemovingAll] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => subscribeWishlist(setSavedIds), []);
+
+  const loadWishlist = useCallback(async (refresh = false) => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
+    setError('');
+    try {
+      const [allEvents, ids, cats] = await Promise.all([
+        fetchHomeConcerts(),
+        fetchHomeWishlist(),
+        fetchHomeCategories().catch(() => []),
+      ]);
+      const normalizedIds = [...new Set(ids.map(Number))];
+      setSavedIds(normalizedIds);
+      publishWishlistIds(normalizedIds);
+      setAllConcerts(allEvents);
+      setEvents(allEvents.filter((event) => normalizedIds.includes(Number(event.id))));
+      setCategories(cats);
+    } catch (e) {
+      setError(e?.message || 'Wishlist gagal dimuat.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    loadWishlist();
+  }, [loadWishlist]));
+
+  useEffect(() => {
+    setEvents(allConcerts.filter((event) => savedIds.includes(Number(event.id))));
+  }, [allConcerts, savedIds]);
+
+  const categoryOptions = useMemo(() => [
+    { value: 'all', label: 'All Category' },
+    ...categories.map((category) => ({
+      value: String(category.id ?? category.category_id),
+      label: category.name || category.category_name,
+    })).filter((category) => category.value !== 'undefined' && category.label),
+  ], [categories]);
+
+  const selectedCategoryLabel = categoryOptions.find(
+    (item) => String(item.value) === String(categoryId),
+  )?.label || 'All Category';
+
+  const filteredEvents = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    return events.filter((event) => {
+      const date = getDate(event);
+      const isPast = date ? date.getTime() < Date.now() : false;
+      const tabMatch = activeTab === 'all'
+        || (activeTab === 'upcoming' && !isPast)
+        || (activeTab === 'past' && isPast);
+      const categoryMatch = categoryId === 'all'
+        || String(event.category_id ?? '') === String(categoryId);
+      const searchMatch = !keyword || [
+        event.name, event.artist, event.category_name,
+        event.venue_name, event.organizer_name,
+      ].some((value) => String(value || '').toLowerCase().includes(keyword));
+      return tabMatch && categoryMatch && searchMatch;
+    });
+  }, [events, activeTab, categoryId, search]);
+
+  const removeOne = useCallback(async (event) => {
+    const id = Number(event.id);
+    if (!Number.isFinite(id) || busyIds.includes(id)) return;
+    setBusyIds((current) => [...current, id]);
+    try {
+      await setHomeWishlist(id, true);
+      setSavedIds((current) => {
+        const next = current.filter((savedId) => savedId !== id);
+        publishWishlistIds(next);
+        return next;
+      });
+      setEvents((current) => current.filter((item) => Number(item.id) !== id));
+    } catch (e) {
+      Alert.alert('Belum berhasil', e?.message || 'Konser gagal dihapus dari wishlist.');
+    } finally {
+      setBusyIds((current) => current.filter((busyId) => busyId !== id));
+    }
+  }, [busyIds]);
+
+  const removeAll = useCallback(() => {
+    if (!savedIds.length || removingAll) return;
+    Alert.alert(
+      'Remove all saved concerts?',
+      'Semua konser akan dihapus dari wishlist kamu.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove All',
+          style: 'destructive',
+          onPress: async () => {
+            setRemovingAll(true);
+            try {
+              for (const id of savedIds) {
+                await setHomeWishlist(id, true);
+              }
+              setSavedIds([]);
+              publishWishlistIds([]);
+              setEvents([]);
+            } catch (e) {
+              Alert.alert('Sebagian belum terhapus', e?.message || 'Coba refresh wishlist.');
+              await loadWishlist(true);
+            } finally {
+              setRemovingAll(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [savedIds, removingAll, loadWishlist]);
+
+  const cardGap = 11;
+  const horizontalPadding = 30;
+  const cardWidth = Math.max(145, (width - horizontalPadding - cardGap) / 2);
 
   return (
     <View style={styles.container}>
-      <StatusBar
-        backgroundColor={COLORS.background}
-        barStyle="light-content"
-      />
-
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadWishlist(true)} tintColor={C.purple} />}
       >
-        {/* HEADER */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Selamat Datang,</Text>
-            <Text style={styles.userName}>Music Lovers ðŸ‘‹</Text>
+            <Text style={styles.greeting}>Halo, music lovers 👋</Text>
+            <Text style={styles.headerSubtitle}>Your saved concerts for later</Text>
           </View>
           <HeaderActions navigation={navigation} />
         </View>
 
-        {/* TOP TABS */}
-        <View style={styles.topTabs}>
-          {['Wishlist', 'Upcoming', 'Favorite'].map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              style={[
-                styles.topTab,
-                activeTab === tab && styles.activeTopTab,
-              ]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Text
-                style={[
-                  styles.topTabText,
-                  activeTab === tab && styles.activeTopTabText,
-                ]}
-              >
-                {tab}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* TITLE */}
-        <View style={styles.titleSection}>
-          <Text style={styles.pageTitle}>MY WISHLIST</Text>
-          <Text style={styles.pageSubtitle}>
-            Simpan konser favoritmu dan jangan sampai terlewat.
-          </Text>
-        </View>
-
-        {/* SEARCH */}
-        <View style={styles.searchBox}>
-          <Search size={19} color={COLORS.muted} />
-
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Cari konser di wishlist kamu..."
-            placeholderTextColor={COLORS.muted}
-            value={search}
-            onChangeText={setSearch}
+        <ImageBackground
+          source={require('../../assets/auth/home.jpg')}
+          style={styles.hero}
+          imageStyle={styles.heroImage}
+        >
+          <LinearGradient
+            colors={['rgba(11,16,32,0.22)', 'rgba(11,16,32,0.52)', 'rgba(11,16,32,0.94)']}
+            style={StyleSheet.absoluteFill}
           />
-
-          <SlidersHorizontal size={19} color={COLORS.muted} />
-        </View>
-
-        {/* FILTER */}
-        <View style={styles.filterHeader}>
-          <View style={styles.totalContainer}>
-            <View style={styles.greenDot} />
-            <Text style={styles.totalText}>
-              {filteredConcerts.length} Saved Concerts
-            </Text>
-          </View>
-
-          <View style={styles.filterActions}>
-            <TouchableOpacity
-              style={styles.filterButton}
-              onPress={() => setSortVisible(!sortVisible)}
-            >
-              <Text style={styles.filterText}>Category</Text>
-              <ChevronDown size={14} color={COLORS.white} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.filterButton}
-              onPress={() => setSortVisible(!sortVisible)}
-            >
-              <Text style={styles.filterText}>Sort</Text>
-              <ChevronDown size={14} color={COLORS.white} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {sortVisible && (
-          <View style={styles.categoryOptions}>
-            {['Semua', 'Indie Pop', 'Metal', 'K-Pop', 'Multi Genre'].map(
-              (item) => (
+          <View style={styles.heroContent}>
+            <View style={styles.tabs}>
+              {TABS.map((tab) => (
                 <TouchableOpacity
-                  key={item}
-                  style={[
-                    styles.categoryOption,
-                    category === item && styles.selectedCategory,
-                  ]}
-                  onPress={() => {
-                    setCategory(item);
-                    setSortVisible(false);
-                  }}
+                  key={tab.value}
+                  style={[styles.tab, activeTab === tab.value && styles.activeTab]}
+                  onPress={() => setActiveTab(tab.value)}
                 >
-                  <Text style={styles.categoryOptionText}>{item}</Text>
+                  <Text style={[styles.tabText, activeTab === tab.value && styles.activeTabText]}>
+                    {tab.label}
+                  </Text>
                 </TouchableOpacity>
-              )
-            )}
+              ))}
+            </View>
+            <Text style={styles.heroTitle}>MY WISHLIST</Text>
+            <Text style={styles.heroSubtitle}>Your saved concerts and events, all in one spot.</Text>
+            <View style={styles.searchBox}>
+              <Search size={18} color="#FFFFFF" />
+              <TextInput
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Search concerts, artists, or venues..."
+                placeholderTextColor="#E0D9F4"
+                style={styles.searchInput}
+                returnKeyType="search"
+              />
+              {search ? (
+                <TouchableOpacity onPress={() => setSearch('')}>
+                  <X size={17} color="#FFFFFF" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
           </View>
-        )}
+        </ImageBackground>
 
-        {/* CONCERT LIST */}
-        {filteredConcerts.length > 0 ? (
-          filteredConcerts.map(renderConcert)
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionTitleWrap}>
+            <LinearGradient colors={[C.purple, C.cyan]} style={styles.titleAccent} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>{filteredEvents.length} Saved Concerts</Text>
+              <Text style={styles.sectionSubtitle}>Your favorite events in one place</Text>
+            </View>
+          </View>
+          <View style={styles.actions}>
+            <Dropdown
+              label={categoryId}
+              value={selectedCategoryLabel}
+              options={categoryOptions}
+              open={categoryOpen}
+              onToggle={() => setCategoryOpen((value) => !value)}
+              onSelect={(value) => {
+                setCategoryId(String(value));
+                setCategoryOpen(false);
+              }}
+            />
+            <TouchableOpacity
+              style={[styles.removeAllButton, (!savedIds.length || removingAll) && styles.disabledButton]}
+              onPress={removeAll}
+              disabled={!savedIds.length || removingAll}
+            >
+              {removingAll ? <ActivityIndicator size="small" color="#FF8298" /> : <Trash2 size={15} color="#FF8298" />}
+              <Text style={styles.removeAllText}>Remove All</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {loading ? (
+          <View style={styles.stateBox}>
+            <ActivityIndicator color={C.purple} size="large" />
+            <Text style={styles.stateText}>Loading your wishlist...</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.stateBox}>
+            <Heart size={34} color={C.purple} />
+            <Text style={styles.emptyTitle}>Wishlist unavailable</Text>
+            <Text style={styles.stateText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => loadWishlist()}>
+              <Text style={styles.retryText}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : filteredEvents.length ? (
+          <View style={styles.grid}>
+            {filteredEvents.map((event) => (
+              <WishlistCard
+                key={event.id}
+                event={event}
+                width={cardWidth}
+                navigation={navigation}
+                onRemove={removeOne}
+                busy={busyIds.includes(Number(event.id))}
+              />
+            ))}
+          </View>
         ) : (
-          <View style={styles.emptyContainer}>
-            <Heart size={45} color={COLORS.purpleLight} />
+          <View style={styles.stateBox}>
+            <Heart size={38} color="#A78BFA" />
             <Text style={styles.emptyTitle}>
-              Wishlist Kosong
+              {events.length ? 'No matching concerts' : 'Your wishlist is empty'}
             </Text>
-            <Text style={styles.emptyText}>
-              Belum ada konser yang sesuai dengan pencarianmu.
+            <Text style={styles.stateText}>
+              {events.length
+                ? 'Try changing your search, category, or tab.'
+                : 'Save concerts you love and they will appear here.'}
             </Text>
+            <TouchableOpacity style={styles.exploreButton} onPress={() => navigation.navigate('Explore')}>
+              <Text style={styles.exploreButtonText}>Explore Concerts</Text>
+            </TouchableOpacity>
           </View>
         )}
-
-        <View style={{ height: 20 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
-
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
+  container: { flex: 1, backgroundColor: C.bg },
+  scrollContent: { paddingHorizontal: 15, paddingTop: 10, paddingBottom: 24 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  greeting: { color: C.white, fontSize: 17, fontWeight: '900' },
+  headerSubtitle: { color: '#929BB7', fontSize: 10, marginTop: 4 },
+  hero: {
+    height: 178, borderRadius: 16, overflow: 'hidden',
+    justifyContent: 'flex-end', backgroundColor: '#25204B',
+    borderWidth: 1, borderColor: 'rgba(139,92,246,0.35)',
   },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 15,
+  heroImage: { borderRadius: 16 },
+  heroContent: { paddingHorizontal: 11, paddingVertical: 10 },
+  tabs: {
+    flexDirection: 'row', alignSelf: 'flex-start', flexWrap: 'nowrap',
+    gap: 5, marginBottom: 8,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 22,
+  tab: {
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 22,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.32)',
+    backgroundColor: 'rgba(15,18,40,0.18)',
   },
-  greeting: {
-    color: COLORS.muted,
-    fontSize: 12,
+  activeTab: { backgroundColor: C.purple, borderColor: C.purple },
+  tabText: { color: C.white, fontSize: 9, fontWeight: '800' },
+  activeTabText: { color: C.white },
+  heroTitle: {
+    fontSize: 24, lineHeight: 28, fontWeight: '900',
+    color: '#A78BFA', letterSpacing: 0.2,
+    textShadowColor: 'rgba(34,211,238,0.4)', textShadowRadius: 10,
   },
-  userName: {
-    color: COLORS.white,
-    fontSize: 17,
-    fontWeight: 'bold',
-    marginTop: 3,
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  iconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 20,
-    backgroundColor: COLORS.card,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 20,
-    backgroundColor: COLORS.purple,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  topTabs: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    padding: 4,
-    marginBottom: 20,
-  },
-  topTab: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  activeTopTab: {
-    backgroundColor: COLORS.purple,
-  },
-  topTabText: {
-    color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  activeTopTabText: {
-    color: COLORS.white,
-  },
-  titleSection: {
-    marginBottom: 15,
-  },
-  pageTitle: {
-    color: COLORS.purpleLight,
-    fontSize: 19,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-  },
-  pageSubtitle: {
-    color: COLORS.muted,
-    fontSize: 11,
-    marginTop: 5,
-  },
+  heroSubtitle: { color: C.white, fontSize: 10, lineHeight: 14, fontWeight: '700', marginTop: 3, marginBottom: 8 },
   searchBox: {
-    height: 45,
-    borderRadius: 10,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    marginBottom: 18,
-    gap: 10,
+    height: 40, borderRadius: 10, backgroundColor: 'rgba(84,86,222,0.78)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, gap: 9,
   },
-  searchInput: {
-    flex: 1,
-    color: COLORS.white,
-    fontSize: 12,
+  searchInput: { flex: 1, color: C.white, fontSize: 11, paddingVertical: 0 },
+  sectionHeader: { marginTop: 23, marginBottom: 14, gap: 12 },
+  sectionTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  titleAccent: { width: 5, height: 38, borderRadius: 5 },
+  sectionTitle: { color: C.white, fontSize: 20, fontWeight: '900' },
+  sectionSubtitle: { color: '#929BB7', fontSize: 10, marginTop: 3 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 20 },
+  dropdownWrap: { width: 145, position: 'relative', zIndex: 1 },
+  dropdownWrapOpen: { zIndex: 1000, elevation: 20 },
+  dropdownButton: {
+    minHeight: 42, borderRadius: 10, borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.35)', backgroundColor: '#151E36',
+    paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', gap: 6,
   },
-  filterHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 15,
+  dropdownValue: { color: C.white, fontSize: 10, fontWeight: '800', flex: 1 },
+  dropdownMenu: {
+    position: 'absolute', top: 47, left: 0, right: 0,
+    maxHeight: 220, zIndex: 1001, elevation: 25,
+    backgroundColor: '#171F3A', borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.5)', borderRadius: 10, overflow: 'hidden',
   },
-  totalContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  dropdownOption: {
+    minHeight: 40, paddingHorizontal: 11, paddingVertical: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
   },
-  greenDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 5,
-    backgroundColor: COLORS.green,
+  dropdownOptionText: { color: '#E5E7EF', fontSize: 10, fontWeight: '600' },
+  dropdownOptionActive: { color: C.cyan, fontWeight: '900' },
+  check: { color: C.cyan, fontWeight: '900' },
+  removeAllButton: {
+    minHeight: 42, paddingHorizontal: 10, borderRadius: 10,
+    borderWidth: 1, borderColor: 'rgba(195,4,55,0.35)',
+    backgroundColor: 'rgba(195,4,55,0.10)',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
   },
-  totalText: {
-    color: COLORS.white,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  filterActions: {
-    flexDirection: 'row',
-    gap: 7,
-  },
-  filterButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  filterText: {
-    color: COLORS.white,
-    fontSize: 10,
-  },
-  categoryOptions: {
-    backgroundColor: COLORS.card,
-    borderRadius: 10,
-    padding: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  categoryOption: {
-    padding: 10,
-    borderRadius: 7,
-  },
-  selectedCategory: {
-    backgroundColor: COLORS.purple,
-  },
-  categoryOptionText: {
-    color: COLORS.white,
-    fontSize: 12,
-  },
-  concertCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    overflow: 'hidden',
-    marginBottom: 17,
-  },
-  concertImage: {
-    height: 165,
-    justifyContent: 'space-between',
-    padding: 12,
-  },
-  imageRadius: {
-    borderTopLeftRadius: 13,
-    borderTopRightRadius: 13,
-  },
-  imageOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.20)',
-  },
-  imageTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  statusBadge: {
-    backgroundColor: COLORS.green,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 7,
-  },
-  statusText: {
-    color: COLORS.white,
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  heartButton: {
-    width: 35,
-    height: 35,
-    borderRadius: 20,
-    backgroundColor: 'rgba(8,13,28,0.75)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  removeAllText: { color: '#FF8298', fontSize: 9, fontWeight: '900' },
+  disabledButton: { opacity: 0.4 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 12 },
+  eventCard: { width: '100%', backgroundColor: '#202A4F', borderRadius: 13, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(139,92,246,0.35)' },
+  posterWrap: { height: 156, position: 'relative', backgroundColor: '#31245D' },
+  poster: { width: '100%', height: '100%' },
+  posterFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#242447', padding: 8 },
+  fallbackBrand: { color: '#A78BFA', fontSize: 18, fontWeight: '900' },
+  fallbackTag: { color: '#22D3EE', fontSize: 7, letterSpacing: 1.5, marginTop: 4 },
+  posterFallbackText: { color: C.white, fontSize: 10, fontWeight: '800', textAlign: 'center', marginTop: 6 },
+  posterShade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(5,8,22,0.12)' },
+  statusBadge: { position: 'absolute', left: 10, top: 10, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 5 },
+  statusText: { fontSize: 9, fontWeight: '900' },
+  heartButton: { position: 'absolute', right: 10, top: 10, width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(11,17,34,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+  wishlistIcon: { width: 19, height: 19 },
   priceBadge: {
-    alignSelf: 'flex-end',
-    backgroundColor: 'rgba(8,13,28,0.90)',
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 8,
+    position: 'absolute', right: 10, bottom: 9, backgroundColor: 'rgba(11,17,34,0.95)',
+    borderWidth: 1, borderColor: C.purple, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 7,
   },
-  priceText: {
-    color: COLORS.white,
-    fontSize: 11,
-    fontWeight: 'bold',
+  priceText: { color: C.white, fontSize: 10, fontWeight: '900' },
+  cardContent: { paddingHorizontal: 12, paddingVertical: 11 },
+  cardLabel: { color: '#22D3EE', fontSize: 9, fontWeight: '900', textTransform: 'uppercase' },
+  categoryText: { color: '#A78BFA', fontSize: 12, fontWeight: '800', marginTop: 4 },
+  eventName: { color: '#FFFFFF', fontSize: 14, fontWeight: '900', lineHeight: 18, marginTop: 3, minHeight: 36 },
+  description: { color: '#A9AAB4', fontSize: 10, lineHeight: 14, marginTop: 5, minHeight: 28 },
+  cardDivider: { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.18)', marginTop: 9, marginBottom: 8 },
+  infoList: { gap: 6 },
+  infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
+  infoIcon: { width: 13, height: 13, marginTop: 1 },
+  infoText: { color: '#D1D5E0', fontSize: 9, lineHeight: 13, flex: 1 },
+  stateBox: {
+    minHeight: 190, paddingHorizontal: 24, paddingVertical: 30,
+    borderRadius: 13, borderWidth: 1, borderColor: C.border,
+    backgroundColor: C.card, alignItems: 'center', justifyContent: 'center',
   },
-  cardContent: {
-    padding: 13,
-  },
-  concertName: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  concertCategory: {
-    color: COLORS.purpleLight,
-    fontSize: 11,
-    marginTop: 5,
-  },
-  description: {
-    color: COLORS.muted,
-    fontSize: 10,
-    lineHeight: 17,
-    marginTop: 12,
-    marginBottom: 12,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    marginBottom: 9,
-  },
-  infoText: {
-    color: COLORS.muted,
-    fontSize: 10,
-    flex: 1,
-  },
-  cardDivider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 12,
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  availableText: {
-    color: COLORS.green,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 7,
-  },
-  buyButton: {
-    backgroundColor: COLORS.purple,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    borderRadius: 8,
-  },
-  buyButtonText: {
-    color: COLORS.white,
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  detailButton: {
-    backgroundColor: '#26324D',
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    borderRadius: 8,
-  },
-  detailButtonText: {
-    color: COLORS.white,
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    paddingVertical: 70,
-  },
-  emptyTitle: {
-    color: COLORS.white,
-    fontSize: 17,
-    fontWeight: 'bold',
-    marginTop: 15,
-  },
-  emptyText: {
-    color: COLORS.muted,
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 8,
-  },
+  stateText: { color: C.muted, fontSize: 10, textAlign: 'center', lineHeight: 15, marginTop: 8 },
+  emptyTitle: { color: C.white, fontSize: 15, fontWeight: '900', marginTop: 12 },
+  exploreButton: { marginTop: 15, backgroundColor: C.primary, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  exploreButtonText: { color: C.white, fontSize: 10, fontWeight: '900' },
+  retryButton: { marginTop: 14, backgroundColor: C.primary, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  retryText: { color: C.white, fontSize: 10, fontWeight: '900' },
 });

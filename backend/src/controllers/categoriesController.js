@@ -4,7 +4,7 @@ const db = require("../config/database");
 async function getPublicCategories(req, res) {
   try {
     const [categories] = await db.execute(
-      `SELECT id, name, description
+      `SELECT id, name, description, icon
        FROM categories
        WHERE status = 'active'
        ORDER BY name ASC`
@@ -28,6 +28,7 @@ async function getAdminCategories(req, res) {
          c.id,
          c.name,
          c.description,
+         c.icon,
          c.status,
          c.created_at,
          c.updated_at,
@@ -36,7 +37,7 @@ async function getAdminCategories(req, res) {
        LEFT JOIN events e
          ON e.category_id = c.id
         AND e.deleted_at IS NULL
-       GROUP BY c.id, c.name, c.description, c.status, c.created_at, c.updated_at
+       GROUP BY c.id, c.name, c.description, c.icon, c.status, c.created_at, c.updated_at
        ORDER BY c.name ASC`
     );
 
@@ -52,6 +53,7 @@ async function createCategory(req, res) {
     const name = String(req.body.name || "").trim();
     const description = String(req.body.description || "").trim();
     const status = req.body.status === "inactive" ? "inactive" : "active";
+    const icon = req.file ? `/uploads/categories/${req.file.filename}` : (req.body.icon || null);
 
     if (!name) {
       return res.status(400).json({ success: false, message: "Category name is required." });
@@ -66,14 +68,14 @@ async function createCategory(req, res) {
     }
 
     const [result] = await db.execute(
-      "INSERT INTO categories (name, description, status) VALUES (?, ?, ?)",
-      [name, description || null, status]
+      "INSERT INTO categories (name, description, icon, status) VALUES (?, ?, ?, ?)",
+      [name, description || null, icon, status]
     );
 
     return res.status(201).json({
       success: true,
       message: "Category created successfully.",
-      category: { id: result.insertId, name, description: description || null, status },
+      category: { id: result.insertId, name, description: description || null, icon, status },
     });
   } catch (error) {
     console.error("Create category error:", error);
@@ -93,21 +95,30 @@ async function updateCategory(req, res) {
     }
 
     const [existing] = await db.execute(
+      "SELECT id, icon FROM categories WHERE id = ? LIMIT 1",
+      [id]
+    );
+    if (!existing.length) {
+      return res.status(404).json({ success: false, message: "Category not found." });
+    }
+
+    const [duplicate] = await db.execute(
       "SELECT id FROM categories WHERE LOWER(name) = LOWER(?) AND id <> ? LIMIT 1",
       [name, id]
     );
-    if (existing.length) {
+    if (duplicate.length) {
       return res.status(409).json({ success: false, message: "A category with this name already exists." });
     }
 
-    const [result] = await db.execute(
-      "UPDATE categories SET name = ?, description = ?, status = ? WHERE id = ?",
-      [name, description || null, status, id]
-    );
+    // Jika tidak upload ikon baru, ikon sebelumnya tetap dipertahankan.
+    const icon = req.file
+      ? `/uploads/categories/${req.file.filename}`
+      : (req.body.icon !== undefined ? req.body.icon : existing[0].icon);
 
-    if (!result.affectedRows) {
-      return res.status(404).json({ success: false, message: "Category not found." });
-    }
+    await db.execute(
+      "UPDATE categories SET name = ?, description = ?, icon = ?, status = ? WHERE id = ?",
+      [name, description || null, icon || null, status, id]
+    );
 
     return res.status(200).json({ success: true, message: "Category updated successfully." });
   } catch (error) {

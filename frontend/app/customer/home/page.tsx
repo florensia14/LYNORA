@@ -10,20 +10,10 @@ import { API_URL, imageUrl, type Concert } from "@/lib/customer";
 type ConcertMeta = Concert;
 type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "ongoing" | "completed" | "new";
 // 2. CONSTANTS
-const CATEGORY_ICONS: Record<string, string> = {
-    pop: "microphone.png",
-    rock: "hand.png",
-    "hip-hop": "boombox.png",
-    "hip hop": "boombox.png",
-    edm: "technology.png",
-    kpop: "disco-ball.png",
-    "k-pop": "disco-ball.png",
-    indie: "wave-sound.png",
-    festivall: "festival.png",
-};
-function getCategoryIcon(name: string) {
-    const key = name.trim().toLowerCase();
-    return `/images/categories/${CATEGORY_ICONS[key] || "category (1).png"}`;
+function getCategoryIcon(category: HomeCategory | string) {
+    const savedIcon = typeof category === "string" ? null : category.icon;
+    if (!savedIcon) return "/images/categories/category (1).png";
+    return imageUrl(savedIcon);
 }
 const STATUS: Record<StatusKey, {
     text: string;
@@ -503,6 +493,7 @@ type HomeCategory = {
     id: number;
     name: string;
     description?: string | null;
+    icon?: string | null;
 };
 function GenreSection({ selectedGenre, onSelect, concerts, categories, }: {
     selectedGenre: string;
@@ -516,6 +507,7 @@ function GenreSection({ selectedGenre, onSelect, concerts, categories, }: {
         ...categories.map((category) => ({
             id: String(category.id),
             name: category.name.trim(),
+            icon: category.icon,
         })).filter((category) => Boolean(category.name)),
     ];
     return (<section className={styles.section}>
@@ -529,7 +521,7 @@ function GenreSection({ selectedGenre, onSelect, concerts, categories, }: {
                 ? concerts.length
                 : concerts.filter((concert) => sameGenre(concert, name)).length;
             return (<button key={id} type="button" onClick={() => onSelect(name)} aria-pressed={active} className={cx(s.button, active ? s.buttonActive : s.buttonIdle)}>
-              <img src={name === "All" ? "/images/categories/category (1).png" : getCategoryIcon(name)} alt="" className={s.icon}/>
+              <img src={name === "All" ? "/images/categories/category (1).png" : getCategoryIcon(categories.find((category) => category.name === name) || name)} alt="" className={s.icon}/>
               <span className={s.name}>{name}</span>
               <span className={cx(s.count, active ? s.countActive : s.countIdle)}>
                 {count} Events

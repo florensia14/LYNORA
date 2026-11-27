@@ -590,7 +590,7 @@ function SidebarContent({
       />
       {/* SIDEBAR */}
       <aside
-        className={`fixed inset-y-0 left-0 z-[70] flex w-[min(260px,82vw)] flex-col border-r border-[#8B5CF6]/70 bg-[#0B1122] text-[#f8f9ff] shadow-2xl transition-[width,transform] duration-300 ease-out lg:z-40 lg:translate-x-0 lg:shadow-none ${
+        className={`fixed inset-y-0 left-0 z-[70] flex w-[min(260px,82vw)] flex-col border-r border-[#8B5CF6]/70 bg-[#0B1122] text-[#f8f9ff] shadow-2xl transition-[width,transform] duration-300 ease-out lg:z-[600] lg:translate-x-0 lg:shadow-none ${
           collapsed ? "lg:w-[80px]" : "lg:w-[220px]"
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
       >

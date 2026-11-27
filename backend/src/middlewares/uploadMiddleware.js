@@ -9,9 +9,10 @@ const uploadRoot = path.join(__dirname, "../../uploads");
 const posterDir = path.join(uploadRoot, "posters");
 const avatarDir = path.join(uploadRoot, "profiles", "avatars");
 const bannerDir = path.join(uploadRoot, "profiles", "banners");
+const categoryDir = path.join(uploadRoot, "categories");
 
 // Buat folder otomatis jika belum tersedia
-[posterDir, avatarDir, bannerDir].forEach((dir) => {
+[posterDir, avatarDir, bannerDir, categoryDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -74,6 +75,13 @@ upload.uploadBanner = createUpload(
   bannerDir,
   "banner",
   5 * 1024 * 1024
+);
+
+// Upload ikon kategori dari Admin Manage Categories.
+upload.uploadCategoryIcon = createUpload(
+  categoryDir,
+  "category",
+  2 * 1024 * 1024
 );
 
 module.exports = upload;

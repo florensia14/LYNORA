@@ -1,932 +1,533 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  Image,
-  StyleSheet,
-  StatusBar,
+  ActivityIndicator,
   Alert,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { WebView } from 'react-native-webview';
 import {
   ArrowLeft,
-  User,
-  Mail,
-  Phone,
-  Ticket,
   CalendarDays,
+  Check,
   MapPin,
   Minus,
   Plus,
-  Check,
-  Tag,
-  Info,
-  LockKeyhole,
+  Ticket,
 } from 'lucide-react-native';
 import HeaderActions from '../../components/HeaderActions';
+import { apiRequest } from '../../services/api';
+import { fetchConcertById } from '../../services/concertService';
 
-const COLORS = {
-  background: '#15121B',
-  surfaceLow: '#1D1A24',
-  surface: '#221E28',
-  surfaceHigh: '#2C2833',
-  purple: '#7C3AED',
-  purpleLight: '#D2BBFF',
-  pink: '#F472B6',
-  green: '#34D399',
-  greenDark: '#064E3B',
-  greenText: '#6EE7B7',
-  white: '#E8DFEE',
-  muted: '#CCC3D8',
-  outline: '#958DA1',
-  border: '#4A4455',
+const C = {
+  bg: '#0B1020',
+  panel: '#161624',
+  field: '#20203A',
+  border: '#676D89',
+  purple: '#8B5CF6',
+  purpleLight: '#B9A7FF',
+  cyan: '#22D3EE',
+  white: '#FFFFFF',
+  muted: '#A9B0C5',
+  red: '#F87171',
+  amber: '#F5B84E',
 };
 
-const formatPrice = (price) =>
-  'Rp' + Number(price || 0).toLocaleString('id-ID').replace(/\./g, '.');
+const MIDTRANS_CLIENT_KEY = process.env.EXPO_PUBLIC_MIDTRANS_CLIENT_KEY || '';
+const MIDTRANS_IS_PRODUCTION =
+  process.env.EXPO_PUBLIC_MIDTRANS_IS_PRODUCTION === 'true';
+const MAX_TICKETS = 10;
+
+const money = (value) =>
+  new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+
+const formatDate = (value) => {
+  if (!value) return 'Tanggal belum tersedia';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Tanggal belum tersedia';
+  return new Intl.DateTimeFormat('id-ID', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Jakarta',
+  }).format(date) + ' WIB';
+};
+
+const makeAttendee = () => ({ full_name: '', email: '', phone: '' });
+
+function getSnapHtml(token) {
+  const scriptUrl = MIDTRANS_IS_PRODUCTION
+    ? 'https://app.midtrans.com/snap/snap.js'
+    : 'https://app.sandbox.midtrans.com/snap/snap.js';
+  const safeToken = JSON.stringify(token);
+  const clientKey = JSON.stringify(MIDTRANS_CLIENT_KEY);
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<style>
+html,body{margin:0;padding:0;background:#0B1020;color:#fff;font-family:Arial,sans-serif}
+#state{padding:28px 20px;text-align:center;color:#A9B0C5;font-size:14px}
+</style>
+</head>
+<body>
+<div id="state">Menyiapkan pembayaran Midtrans...</div>
+<script src="${scriptUrl}" data-client-key=${clientKey}></script>
+<script>
+(function(){
+  var token=${safeToken};
+  function send(type, detail){
+    if(window.ReactNativeWebView){
+      window.ReactNativeWebView.postMessage(JSON.stringify({type:type,detail:detail||null}));
+    }
+  }
+  function start(){
+    if(!window.snap){send('error','Midtrans Snap gagal dimuat.');return;}
+    document.getElementById('state').innerText='Silakan selesaikan pembayaran pada jendela Midtrans.';
+    window.snap.pay(token,{
+      onSuccess:function(result){send('success',result);},
+      onPending:function(result){send('pending',result);},
+      onError:function(result){send('error',result);},
+      onClose:function(){send('close');}
+    });
+  }
+  if(document.readyState==='complete'){start();}
+  else{window.addEventListener('load',start);}
+})();
+</script>
+</body>
+</html>`;
+}
+
+function SectionTitle({ children }) {
+  return (
+    <View style={styles.sectionTitleRow}>
+      <View style={styles.sectionAccent} />
+      <Text style={styles.sectionTitle}>{children}</Text>
+    </View>
+  );
+}
+
+function Field({ label, value, onChangeText, placeholder, keyboardType, optional, autoCapitalize }) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.label}>
+        {label}{!optional && <Text style={styles.required}> *</Text>}
+        {optional && <Text style={styles.optional}> (Optional)</Text>}
+      </Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#858BA3"
+        keyboardType={keyboardType || 'default'}
+        autoCapitalize={autoCapitalize || 'words'}
+        autoCorrect={false}
+        style={styles.input}
+      />
+    </View>
+  );
+}
 
 export default function CheckoutScreen({ navigation, route }) {
-  const order = route?.params || {};
-  const concert = order.concert || {};
-  const ticket = order.ticket || {};
-  const ticketPrice = Number(ticket.price || 0);
+  const routeOrder = route?.params || {};
+  const routeConcert = routeOrder.concert || {};
+  const routeTicket = routeOrder.ticket || {};
+  const eventId = Number(routeOrder.eventId || routeConcert.id);
+  const categoryId = Number(routeTicket.id || routeOrder.ticketCategoryId);
+  const initialQuantity = Math.max(1, Math.min(MAX_TICKETS, Number(routeOrder.quantity || 1)));
 
-  const [quantity, setQuantity] = useState(Number(order.quantity || 1));
-  const [fullName, setFullName] = useState(order.buyerName || '');
-  const [email, setEmail] = useState(order.buyerEmail || '');
-  const [phone, setPhone] = useState(order.buyerPhone || '');
-  const [voucher, setVoucher] = useState('');
-  const [discount, setDiscount] = useState(0);
-  const [voucherFeedback, setVoucherFeedback] = useState('');
-  const [acceptedTerms, setAcceptedTerms] = useState(true);
+  const [concert, setConcert] = useState(routeConcert);
+  const [ticket, setTicket] = useState(routeTicket);
+  const [quantity, setQuantity] = useState(initialQuantity);
+  const [attendees, setAttendees] = useState(() =>
+    Array.from({ length: initialQuantity }, makeAttendee),
+  );
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [error, setError] = useState('');
+  const [orderId, setOrderId] = useState(null);
+  const [paymentStatus, setPaymentStatus] = useState('');
+  const [snapHtml, setSnapHtml] = useState('');
+  const [showSnap, setShowSnap] = useState(false);
 
-  const adminFee = Number(order.adminFee || 5000);
-  const subtotal = ticketPrice * quantity;
-  const total = Math.max(0, subtotal + adminFee - discount);
+  useEffect(() => {
+    setAttendees((current) =>
+      Array.from({ length: quantity }, (_, index) => current[index] || makeAttendee()),
+    );
+  }, [quantity]);
 
-  const applyVoucher = () => {
-    const code = voucher.trim().toUpper();
-    if (!code) {
-      setDiscount(0);
-      setVoucherFeedback('Masukkan kode voucher terlebih dahulu.');
-      return;
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        if (!Number.isSafeInteger(eventId) || eventId <= 0) {
+          throw new Error('ID konser tidak valid. Silakan pilih konser kembali.');
+        }
+        const detail = await fetchConcertById(eventId);
+        if (!active) return;
+        setConcert({ ...routeConcert, ...detail });
+        const categories = Array.isArray(detail.ticket_categories) ? detail.ticket_categories : [];
+        const matched = categories.find((item) => Number(item.id) === categoryId);
+        if (matched) {
+          setTicket(matched);
+        } else if (!routeTicket.id && categories.length) {
+          setTicket(categories[0]);
+        } else {
+          throw new Error('Kategori tiket tidak ditemukan. Silakan pilih tiket kembali.');
+        }
+      } catch (e) {
+        if (active) setError(e?.message || 'Gagal memuat detail checkout.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [eventId, categoryId]);
+
+  const subtotal = Number(ticket?.price || 0) * quantity;
+  const remaining = Number(ticket?.remaining ?? ticket?.stock ?? 0);
+  const salesStatus = String(concert?.sales_status || '').toLowerCase();
+  const eventEnded = String(concert?.lifecycle_status || '').toLowerCase() === 'completed';
+  const unavailable =
+    eventEnded ||
+    salesStatus !== 'on_sale' ||
+    (Number.isFinite(remaining) && remaining > 0 && quantity > remaining);
+
+  const updateAttendee = (index, field, value) => {
+    setAttendees((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    );
+  };
+
+  const validateAttendees = () => {
+    if (attendees.length !== quantity) return 'Jumlah data attendee tidak sesuai jumlah tiket.';
+    for (let i = 0; i < attendees.length; i += 1) {
+      const item = attendees[i];
+      if (!item.full_name.trim()) return `Nama lengkap attendee ${i + 1} wajib diisi.`;
+      if (item.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item.email.trim())) {
+        return `Format email attendee ${i + 1} tidak valid.`;
+      }
     }
+    return '';
+  };
 
-    if (code === 'LYNORA10') {
-      setDiscount(Math.round(subtotal * 0.1));
-      setVoucherFeedback('Voucher LYNORA10 berhasil diterapkan.');
-    } else if (code === 'LYNORA') {
-      setDiscount(Math.min(50000, subtotal));
-      setVoucherFeedback('Voucher LYNORA berhasil diterapkan.');
-    } else {
-      setDiscount(0);
-      setVoucherFeedback('Kode voucher tidak valid.');
+  const checkPaymentStatus = async (id = orderId) => {
+    if (!id) return false;
+    setCheckingStatus(true);
+    try {
+      const result = await apiRequest(`/payments/orders/${id}/status`);
+      const payment = String(result.payment_status || '').toLowerCase();
+      const orderState = String(result.order_status || '').toLowerCase();
+      setPaymentStatus(payment || orderState || 'pending');
+      if (['success', 'paid', 'settlement'].includes(payment) ||
+          ['paid', 'completed'].includes(orderState)) {
+        setShowSnap(false);
+        Alert.alert('Pembayaran berhasil', 'Pembayaran terkonfirmasi. Tiket kamu dapat dilihat di My Tickets.', [
+          { text: 'Lihat My Tickets', onPress: () => navigation.navigate('MainTab', { screen: 'MyTickets' }) },
+        ]);
+        return true;
+      }
+      setError(`Pembayaran belum dikonfirmasi. Status saat ini: ${payment || 'pending'}.`);
+      return false;
+    } catch (e) {
+      setError(e?.message || 'Gagal memeriksa status pembayaran.');
+      return false;
+    } finally {
+      setCheckingStatus(false);
     }
   };
 
-  const handlePayment = () => {
-    if (!fullName.trim() || !email.trim() || !phone.trim()) {
-      Alert.alert(
-        'Data belum lengkap',
-        'Silakan lengkapi nama lengkap, email, dan nomor HP.'
-      );
+  const handleContinuePayment = async () => {
+    if (processing) return;
+    setError('');
+    if (!concert || !ticket?.id) {
+      setError('Data konser atau kategori tiket belum tersedia.');
+      return;
+    }
+    if (unavailable) {
+      setError('Penjualan tiket belum tersedia atau kuota tidak mencukupi.');
+      return;
+    }
+    const attendeeError = validateAttendees();
+    if (attendeeError) {
+      setError(attendeeError);
+      return;
+    }
+    if (!agreed) {
+      setError('Silakan setujui syarat dan ketentuan terlebih dahulu.');
+      return;
+    }
+    if (!MIDTRANS_CLIENT_KEY) {
+      setError('EXPO_PUBLIC_MIDTRANS_CLIENT_KEY belum diatur di file .env mobile.');
       return;
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      Alert.alert('Email tidak valid', 'Silakan masukkan alamat email yang benar.');
-      return;
-    }
+    try {
+      setProcessing(true);
+      // Keep the same API contract as Customer Web: POST /orders/checkout { items }.
+      const orderResult = await apiRequest('/orders/checkout', {
+        method: 'POST',
+        body: {
+          items: [{
+            ticket_category_id: Number(ticket.id),
+            quantity,
+            attendees: attendees.map((item) => ({
+              full_name: item.full_name.trim(),
+              email: item.email.trim() || null,
+              phone: item.phone.trim() || null,
+            })),
+          }],
+        },
+      });
+      const createdOrderId = Number(orderResult?.order?.id);
+      if (!Number.isSafeInteger(createdOrderId) || createdOrderId <= 0) {
+        throw new Error('ID order tidak diterima dari backend.');
+      }
+      setOrderId(createdOrderId);
 
-    if (!acceptedTerms) {
-      Alert.alert(
-        'Persetujuan dibutuhkan',
-        'Setujui syarat dan ketentuan untuk melanjutkan pembayaran.'
-      );
-      return;
-    }
+      const paymentResult = await apiRequest(`/payments/orders/${createdOrderId}/payment`, {
+        method: 'POST',
+      });
+      const snapToken = paymentResult?.payment?.snap_token;
+      if (!snapToken) throw new Error('Snap token Midtrans tidak diterima dari backend.');
 
-    navigation.navigate('Payment', {
-      ...order,
-      quantity,
-      subtotal,
-      adminFee,
-      total,
-      discount,
-      checkoutUser: {
-        fullName: fullName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-      },
-    });
+      setSnapHtml(getSnapHtml(snapToken));
+      setShowSnap(true);
+    } catch (e) {
+      setError(e?.message || 'Gagal memproses checkout.');
+    } finally {
+      setProcessing(false);
+    }
   };
+
+  const handleSnapMessage = async (event) => {
+    let message;
+    try {
+      message = JSON.parse(event.nativeEvent.data);
+    } catch {
+      return;
+    }
+    if (message.type === 'success' || message.type === 'pending' || message.type === 'error' || message.type === 'close') {
+      if (message.type === 'error') setError('Midtrans melaporkan pembayaran bermasalah. Periksa status pesanan sebelum mencoba lagi.');
+      if (message.type === 'pending') setPaymentStatus('pending');
+      if (message.type === 'success') setPaymentStatus('waiting-confirmation');
+      if (message.type === 'close') setPaymentStatus('unconfirmed');
+      // Never issue tickets from the WebView callback. Confirm with backend.
+      await checkPaymentStatus();
+    }
+  };
+
+  const poster = concert?.poster_url || concert?.hero_image_url || concert?.banner_url || concert?.image;
+  const title = concert?.name || concert?.title || 'Concert';
+  const venue = [concert?.venue_name, concert?.venue_address].filter(Boolean).join(' · ') || concert?.location || 'Venue to be announced';
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+        <ActivityIndicator size="large" color={C.cyan} />
+        <Text style={styles.loadingText}>Loading checkout...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <StatusBar backgroundColor={COLORS.background} barStyle="light-content" />
-
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-            activeOpacity={0.8}
-          >
-            <ArrowLeft size={20} color={COLORS.white} />
-          </TouchableOpacity>
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <ArrowLeft size={20} color={C.white} />
+        </TouchableOpacity>
+        <View style={styles.headerText}>
           <Text style={styles.headerTitle}>Checkout</Text>
+          <Text style={styles.headerSubtitle}>Complete your order</Text>
         </View>
         <HeaderActions navigation={navigation} />
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        <Text style={styles.subtitle}>
-          Selesaikan pemesanan tiketmu untuk menonton konser favoritmu.
-        </Text>
-
-        <View style={styles.stepper}>
-          {[
-            ['1.', 'Order'],
-            ['2.', 'Payment'],
-            ['3.', 'E-Ticket'],
-          ].map(([number, label], index) => (
-            <View
-              key={label}
-              style={[styles.stepItem, index === 0 && styles.stepActive]}
-            >
-              <Text
-                style={[styles.stepText, index === 0 && styles.stepTextActive]}
-              >
-                {number}
-              </Text>
-              <Text
-                style={[styles.stepText, index === 0 && styles.stepTextActive]}
-              >
-                {label}
-              </Text>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.eventCard}>
-          {concert.image ? (
-            <Image
-              source={{ uri: concert.image }}
-              style={styles.eventImage}
-            />
-          ) : (
-            <View style={[styles.eventImage, styles.eventImageFallback]}>
-              <Ticket size={24} color={COLORS.purpleLight} />
-            </View>
-          )}
-
-          <View style={styles.eventInfo}>
-            <Text style={styles.eventTitle} numberOfLines={2}>
-              {concert.title || 'Konser'}
-            </Text>
-            <Text style={styles.eventCategory} numberOfLines={1}>
-              [{ticket.name || 'CAT 1'}] {concert.category || 'JAKARTA'}
-            </Text>
-            <View style={styles.eventDetailRow}>
-              <CalendarDays size={13} color={COLORS.outline} />
-              <Text style={styles.eventDetailText} numberOfLines={1}>
-                {concert.date || '-'}
-              </Text>
-            </View>
-            <View style={styles.eventDetailRow}>
-              <MapPin size={13} color={COLORS.outline} />
-              <Text style={styles.eventDetailText} numberOfLines={1}>
-                {concert.location || '-'}
-              </Text>
-            </View>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={styles.stepper}>
+            {['1  Order Details', '2  Payment', '3  E-Ticket'].map((step, index) => (
+              <View key={step} style={[styles.step, index === 0 && styles.stepActive]}>
+                <Text style={[styles.stepText, index === 0 && styles.stepTextActive]}>{step}</Text>
+              </View>
+            ))}
           </View>
-        </View>
 
-        <SectionTitle title="Ticket Selection" />
-        <View style={styles.ticketCard}>
-          <View style={styles.ticketHeader}>
-            <View style={styles.ticketIcon}>
-              <Ticket size={20} color={COLORS.purpleLight} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.ticketTitle}>
-                {ticket.name || 'CAT 1'} – Festival Floor
-              </Text>
-              <Text style={styles.ticketDescription}>
-                Standing area dekat dengan stage.
-              </Text>
+          <View style={styles.eventCard}>
+            {poster ? <Image source={{ uri: poster }} style={styles.poster} /> : <View style={[styles.poster, styles.posterFallback]}><Ticket color={C.purpleLight} size={26} /></View>}
+            <View style={styles.eventDetails}>
+              <Text style={styles.liveTag}>LIVE EVENT</Text>
+              <Text style={styles.eventTitle}>{title}</Text>
+              <View style={styles.metaRow}><CalendarDays size={13} color={C.muted} /><Text style={styles.metaText}>{formatDate(concert?.start_date || concert?.date)}</Text></View>
+              <View style={styles.metaRow}><MapPin size={13} color={C.muted} /><Text style={styles.metaText}>{venue}</Text></View>
             </View>
           </View>
 
-          {[
-            'Akses area festival (standing)',
-            'View panggung lebih dekat',
-            'Merchandise booth area',
-          ].map((perk) => (
-            <View key={perk} style={styles.perkRow}>
-              <Check size={15} color={COLORS.purpleLight} />
-              <Text style={styles.perkText}>{perk}</Text>
+          <SectionTitle>Ticket Selection</SectionTitle>
+          <View style={styles.card}>
+            <View style={styles.ticketTop}>
+              <View style={styles.ticketInfo}>
+                <Text style={styles.ticketName}>{ticket?.name || 'Ticket'}</Text>
+                <Text style={styles.ticketBenefit}>{ticket?.benefit || ticket?.description || 'Enjoy the live concert experience.'}</Text>
+              </View>
+              <Text style={styles.ticketPrice}>{money(ticket?.price)}</Text>
             </View>
-          ))}
-
-          <View style={styles.ticketPriceRow}>
-            <View>
-              <Text style={styles.priceLabel}>Harga per Tiket</Text>
-              <Text style={styles.ticketPrice}>{formatPrice(ticketPrice)}</Text>
+            <View style={styles.quantityRow}>
+              <View>
+                <Text style={styles.quantityLabel}>Quantity</Text>
+                <Text style={styles.hint}>Maximum 10 tickets per order</Text>
+              </View>
+              <View style={styles.quantityControl}>
+                <TouchableOpacity style={styles.quantityButton} disabled={quantity <= 1} onPress={() => setQuantity((v) => Math.max(1, v - 1))}><Minus size={16} color={C.white} /></TouchableOpacity>
+                <Text style={styles.quantityValue}>{quantity}</Text>
+                <TouchableOpacity style={styles.quantityButton} disabled={quantity >= MAX_TICKETS || (remaining > 0 && quantity >= remaining)} onPress={() => setQuantity((v) => Math.min(MAX_TICKETS, remaining > 0 ? Math.min(remaining, v + 1) : v + 1))}><Plus size={16} color={C.white} /></TouchableOpacity>
+              </View>
             </View>
-
-            <View style={styles.quantityControl}>
-              <TouchableOpacity
-                style={[styles.quantityButton, quantity <= 1 && styles.quantityDisabled]}
-                onPress={() => setQuantity((value) => Math.max(1, value - 1))}
-                disabled={quantity <= 1}
-                activeOpacity={0.8}
-              >
-                <Minus size={17} color={COLORS.white} />
-              </TouchableOpacity>
-              <Text style={styles.quantityValue}>{quantity}</Text>
-              <TouchableOpacity
-                style={[styles.quantityButton, quantity >= 4 && styles.quantityDisabled]}
-                onPress={() => setQuantity((value) => Math.min(4, value + 1))}
-                disabled={quantity >= 4}
-                activeOpacity={0.8}
-              >
-                <Plus size={17} color={COLORS.white} />
-              </TouchableOpacity>
-            </View>
+            <Text style={styles.remaining}>{ticket?.remaining ?? '—'} tickets remaining</Text>
           </View>
 
-          <View style={styles.ticketMetaRow}>
-            <View style={styles.stockBadge}>
-              <Text style={styles.stockText}>Sisa Kuota: 520 tiket</Text>
-            </View>
-            <Text style={styles.maxText}>Maks. 4 tiket / akun</Text>
+          <SectionTitle>Attendee Information</SectionTitle>
+          <View style={styles.card}>
+            {attendees.map((attendee, index) => (
+              <View key={index} style={styles.attendeeCard}>
+                <Text style={styles.attendeeTitle}>Attendee {index + 1}</Text>
+                <Field label="Full Name" value={attendee.full_name} onChangeText={(v) => updateAttendee(index, 'full_name', v)} placeholder="Enter attendee full name" />
+                <Field label="Email Address" optional value={attendee.email} onChangeText={(v) => updateAttendee(index, 'email', v)} placeholder="Enter attendee email address" keyboardType="email-address" autoCapitalize="none" />
+                <Field label="Phone Number" optional value={attendee.phone} onChangeText={(v) => updateAttendee(index, 'phone', v)} placeholder="+62" keyboardType="phone-pad" autoCapitalize="none" />
+              </View>
+            ))}
+            <Text style={styles.attendeeNote}>Enter the details of each ticket holder. If an email is left blank, the e-ticket will use the email registered on the purchaser's LYNORA account.</Text>
           </View>
-        </View>
 
-        <SectionTitle title="Informasi Pemesan (Attendee)" />
-        <View style={styles.formCard}>
-          <InputLabel
-            label="Full Name"
-            icon={<User size={17} color={COLORS.outline} />}
-            placeholder="Nama lengkap sesuai KTP"
-            value={fullName}
-            onChangeText={setFullName}
-          />
-          <InputLabel
-            label="Email Address"
-            icon={<Mail size={17} color={COLORS.outline} />}
-            placeholder="you@example.com"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-          />
-          <InputLabel
-            label="Phone Number"
-            icon={<Phone size={17} color={COLORS.outline} />}
-            placeholder="+62 812-0000-0000"
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-          />
-        </View>
-
-        <View style={styles.voucherCard}>
-          <View style={styles.voucherHeading}>
-            <Tag size={18} color={COLORS.purpleLight} />
-            <Text style={styles.voucherTitle}>Voucher / Promo Code</Text>
+          <SectionTitle>Order Summary</SectionTitle>
+          <View style={styles.card}>
+            <View style={styles.summaryRow}><Text style={styles.summaryLabel}>{ticket?.name || 'Ticket'} × {quantity}</Text><Text style={styles.summaryValue}>{money(subtotal)}</Text></View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total Payment</Text><Text style={styles.totalValue}>{money(subtotal)}</Text></View>
           </View>
-          <View style={styles.voucherRow}>
-            <TextInput
-              style={styles.voucherInput}
-              placeholder="Masukkan kode voucher"
-              placeholderTextColor={COLORS.outline}
-              value={voucher}
-              onChangeText={setVoucher}
-              autoCapitalize="characters"
-            />
-            <TouchableOpacity
-              style={styles.applyButton}
-              onPress={applyVoucher}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.applyText}>Apply</Text>
-            </TouchableOpacity>
+
+          <TouchableOpacity style={styles.agreement} onPress={() => setAgreed((v) => !v)}>
+            <View style={[styles.checkbox, agreed && styles.checkboxActive]}>{agreed && <Check size={13} color={C.white} />}</View>
+            <Text style={styles.agreementText}>I have read and agree to the LYNORA Terms & Conditions and policies.</Text>
+          </TouchableOpacity>
+
+          {!!error && <Text style={styles.error}>{error}</Text>}
+          {!!orderId && <TouchableOpacity style={styles.statusButton} disabled={checkingStatus} onPress={() => checkPaymentStatus()}><Text style={styles.statusButtonText}>{checkingStatus ? 'Checking payment...' : 'Check Payment Status'}</Text></TouchableOpacity>}
+          {!!paymentStatus && <Text style={styles.paymentStatus}>Payment status: {paymentStatus}</Text>}
+          <TouchableOpacity style={[styles.continueButton, (processing || unavailable) && styles.disabledButton]} disabled={processing || unavailable} onPress={handleContinuePayment}>
+            {processing ? <ActivityIndicator color={C.white} /> : <Text style={styles.continueText}>Continue to Payment →</Text>}
+          </TouchableOpacity>
+          <Text style={styles.secureText}>Secure payment powered by Midtrans.</Text>
+          <View style={{ height: 24 }} />
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <Modal visible={showSnap} animationType="slide" onRequestClose={() => setShowSnap(false)}>
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowSnap(false)} style={styles.backButton}><ArrowLeft size={20} color={C.white} /></TouchableOpacity>
+            <Text style={styles.modalTitle}>MIDTRANS PAYMENT</Text>
+            <View style={{ width: 40 }} />
           </View>
-          {!!voucherFeedback && (
-            <Text
-              style={[
-                styles.voucherFeedback,
-                discount === 0 && styles.voucherFeedbackError,
-              ]}
-            >
-              {voucherFeedback}
-            </Text>
-          )}
+          {snapHtml ? <WebView source={{ html: snapHtml }} onMessage={handleSnapMessage} javaScriptEnabled domStorageEnabled startInLoadingState renderLoading={() => <View style={styles.center}><ActivityIndicator color={C.cyan} size="large" /></View>} /> : <View style={styles.center}><Text style={styles.loadingText}>Preparing payment...</Text></View>}
         </View>
-
-        <SectionTitle title="Order Summary" />
-        <View style={styles.summaryCard}>
-          <SummaryRow
-            label={`Ticket (${ticket.name || 'CAT 1'}) × ${quantity}`}
-            value={formatPrice(subtotal)}
-          />
-          <SummaryRow
-            label="Platform / Service Fee"
-            value={formatPrice(adminFee)}
-            info
-          />
-          <SummaryRow
-            label="Voucher Discount"
-            value={discount > 0 ? '-' + formatPrice(discount) : 'Rp0'}
-            success
-          />
-          <View style={styles.summaryDivider} />
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total Payment</Text>
-            <Text style={styles.totalValue}>{formatPrice(total)}</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={styles.termsRow}
-          onPress={() => setAcceptedTerms((value) => !value)}
-          activeOpacity={0.8}
-        >
-          <View style={[styles.checkbox, acceptedTerms && styles.checkboxActive]}>
-            {acceptedTerms && <Check size={13} color={COLORS.white} />}
-          </View>
-          <Text style={styles.termsText}>
-            Saya telah membaca dan menyetujui{' '}
-            <Text style={styles.termsLink}>Syarat & Ketentuan</Text>,{' '}
-            <Text style={styles.termsLink}>Kebijakan Pembelian</Text>, dan{' '}
-            <Text style={styles.termsLink}>Kebijakan Refund</Text> dari LYNORA.
-          </Text>
-        </TouchableOpacity>
-
-        <View style={{ height: 116 }} />
-      </ScrollView>
-
-      <View style={styles.bottomBar}>
-        <View style={styles.bottomTotalRow}>
-          <Text style={styles.bottomLabel}>Total Payment</Text>
-          <Text style={styles.bottomPrice}>{formatPrice(total)}</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.payButton}
-          activeOpacity={0.85}
-          onPress={handlePayment}
-        >
-          <Ticket size={19} color={COLORS.white} />
-          <Text style={styles.payText}>Continue to Payment</Text>
-        </TouchableOpacity>
-        <View style={styles.secureRow}>
-          <LockKeyhole size={13} color={COLORS.outline} />
-          <Text style={styles.secureText}>Secure payment powered by </Text>
-          <Text style={styles.secureBrand}>midtrans</Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function SectionTitle({ title }) {
-  return (
-    <View style={styles.sectionTitleRow}>
-      <View style={styles.sectionLine} />
-      <Text style={styles.sectionTitle}>{title}</Text>
-    </View>
-  );
-}
-
-function InputLabel({
-  label,
-  icon,
-  placeholder,
-  value,
-  onChangeText,
-  keyboardType,
-}) {
-  return (
-    <View style={styles.inputLabelWrap}>
-      <Text style={styles.inputLabel}>
-        {label} <Text style={styles.requiredMark}>*</Text>
-      </Text>
-      <View style={styles.inputContainer}>
-        {icon}
-        <TextInput
-          style={styles.input}
-          placeholder={placeholder}
-          placeholderTextColor={COLORS.outline}
-          value={value}
-          onChangeText={onChangeText}
-          keyboardType={keyboardType}
-          autoCapitalize={keyboardType === 'email-address' ? 'none' : 'words'}
-        />
-      </View>
-    </View>
-  );
-}
-
-function SummaryRow({ label, value, info, success }) {
-  return (
-    <View style={styles.summaryRow}>
-      <View style={styles.summaryLabelWrap}>
-        <Text style={styles.summaryLabel}>{label}</Text>
-        {info && <Info size={14} color={COLORS.outline} />}
-      </View>
-      <Text style={[styles.summaryValue, success && styles.summarySuccess]}>
-        {value}
-      </Text>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceHigh,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    color: COLORS.white,
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: '700',
-  },
-  brand: {
-    color: COLORS.white,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  brandAccent: {
-    color: COLORS.purpleLight,
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-  },
-  subtitle: {
-    color: COLORS.muted,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  stepper: {
-    height: 45,
-    marginTop: 10,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 9,
-    backgroundColor: COLORS.surfaceLow,
-    padding: 4,
-    flexDirection: 'row',
-  },
-  stepItem: {
-    flex: 1,
-    borderRadius: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  stepActive: {
-    backgroundColor: COLORS.purple,
-  },
-  stepText: {
-    color: COLORS.outline,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  stepTextActive: {
-    color: '#EDE0FF',
-  },
-  eventCard: {
-    minHeight: 112,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    padding: 16,
-    gap: 16,
-  },
-  eventImage: {
-    width: 96,
-    height: 80,
-    borderRadius: 9,
-  },
-  eventImageFallback: {
-    backgroundColor: COLORS.surfaceHigh,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  eventInfo: {
-    flex: 1,
-  },
-  eventTitle: {
-    color: COLORS.white,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  eventCategory: {
-    color: COLORS.pink,
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  eventDetailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 5,
-  },
-  eventDetailText: {
-    flex: 1,
-    color: COLORS.muted,
-    fontSize: 11,
-  },
-  sectionTitleRow: {
-    height: 44,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingBottom: 8,
-    gap: 8,
-  },
-  sectionLine: {
-    width: 4,
-    height: 16,
-    borderRadius: 4,
-    backgroundColor: COLORS.purple,
-  },
-  sectionTitle: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  ticketCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    padding: 16,
-  },
-  ticketHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  ticketIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceHigh,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ticketTitle: {
-    color: COLORS.white,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  ticketDescription: {
-    color: COLORS.muted,
-    fontSize: 12,
-    marginTop: 3,
-  },
-  perkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 7,
-  },
-  perkText: {
-    color: COLORS.muted,
-    fontSize: 12,
-  },
-  ticketPriceRow: {
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  priceLabel: {
-    color: COLORS.outline,
-    fontSize: 11,
-  },
-  ticketPrice: {
-    color: COLORS.pink,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '700',
-  },
-  quantityControl: {
-    height: 42,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceLow,
-    padding: 4,
-  },
-  quantityButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 7,
-    backgroundColor: COLORS.surfaceHigh,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  quantityDisabled: {
-    opacity: 0.4,
-  },
-  quantityValue: {
-    width: 28,
-    color: COLORS.white,
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  ticketMetaRow: {
-    marginTop: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  stockBadge: {
-    borderRadius: 20,
-    backgroundColor: COLORS.greenDark,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  stockText: {
-    color: COLORS.greenText,
-    fontSize: 11,
-  },
-  maxText: {
-    color: COLORS.outline,
-    fontSize: 10,
-  },
-  formCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    padding: 16,
-  },
-  inputLabelWrap: {
-    marginBottom: 14,
-  },
-  inputLabel: {
-    color: COLORS.muted,
-    fontSize: 12,
-    marginBottom: 6,
-  },
-  requiredMark: {
-    color: COLORS.pink,
-  },
-  inputContainer: {
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceLow,
-    paddingHorizontal: 12,
-  },
-  input: {
-    flex: 1,
-    color: COLORS.white,
-    fontSize: 13,
-    paddingLeft: 10,
-  },
-  voucherCard: {
-    marginTop: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    padding: 16,
-  },
-  voucherHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  voucherTitle: {
-    color: COLORS.white,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  voucherRow: {
-    marginTop: 10,
-    flexDirection: 'row',
-    gap: 8,
-  },
-  voucherInput: {
-    flex: 1,
-    height: 44,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceLow,
-    color: COLORS.white,
-    fontSize: 12,
-    paddingHorizontal: 12,
-  },
-  applyButton: {
-    height: 44,
-    minWidth: 66,
-    borderRadius: 9,
-    backgroundColor: COLORS.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  applyText: {
-    color: '#EDE0FF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  voucherFeedback: {
-    color: COLORS.green,
-    fontSize: 11,
-    marginTop: 8,
-  },
-  voucherFeedbackError: {
-    color: '#FFB4AB',
-  },
-  summaryCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
-    padding: 16,
-  },
-  summaryRow: {
-    minHeight: 34,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  summaryLabelWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  summaryLabel: {
-    color: COLORS.muted,
-    fontSize: 13,
-  },
-  summaryValue: {
-    color: COLORS.white,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  summarySuccess: {
-    color: COLORS.green,
-  },
-  summaryDivider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 8,
-  },
-  totalRow: {
-    paddingTop: 5,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  totalLabel: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  totalValue: {
-    color: COLORS.purpleLight,
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  termsRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginTop: 14,
-  },
-  checkbox: {
-    width: 16,
-    height: 16,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceLow,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxActive: {
-    backgroundColor: COLORS.purple,
-  },
-  termsText: {
-    flex: 1,
-    color: COLORS.muted,
-    fontSize: 11,
-    lineHeight: 17,
-  },
-  termsLink: {
-    color: COLORS.purpleLight,
-    textDecorationLine: 'underline',
-  },
-  bottomBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#100D16',
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 14,
-  },
-  bottomTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  bottomLabel: {
-    color: COLORS.muted,
-    fontSize: 11,
-  },
-  bottomPrice: {
-    color: COLORS.purpleLight,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  payButton: {
-    height: 48,
-    marginTop: 8,
-    borderRadius: 9,
-    backgroundColor: COLORS.purple,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  payText: {
-    color: '#EDE0FF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  secureRow: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secureText: {
-    color: COLORS.outline,
-    fontSize: 10,
-  },
-  secureBrand: {
-    color: COLORS.muted,
-    fontSize: 10,
-  },
+  flex: { flex: 1 },
+  container: { flex: 1, backgroundColor: C.bg },
+  center: { flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loadingText: { color: C.muted, marginTop: 12, fontSize: 12 },
+  header: { minHeight: 64, paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: 'rgba(139,92,246,0.18)', gap: 10 },
+  backButton: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center', backgroundColor: C.panel },
+  headerText: { flex: 1 },
+  headerTitle: { color: C.white, fontSize: 17, fontWeight: '900' },
+  headerSubtitle: { color: C.muted, fontSize: 10, marginTop: 2 },
+  scrollContent: { padding: 16, gap: 14 },
+  stepper: { flexDirection: 'row', gap: 7 },
+  step: { flex: 1, backgroundColor: '#20203A', paddingVertical: 11, paddingHorizontal: 5, borderRadius: 9, alignItems: 'center' },
+  stepActive: { backgroundColor: '#6255DF' },
+  stepText: { color: C.muted, fontSize: 9, fontWeight: '800' },
+  stepTextActive: { color: C.white },
+  eventCard: { flexDirection: 'row', gap: 12, borderWidth: 1, borderColor: C.border, borderRadius: 13, backgroundColor: C.panel, padding: 12 },
+  poster: { width: 104, height: 112, borderRadius: 9, backgroundColor: C.field },
+  posterFallback: { alignItems: 'center', justifyContent: 'center' },
+  eventDetails: { flex: 1, gap: 6 },
+  liveTag: { alignSelf: 'flex-start', color: '#FF6B81', backgroundColor: '#2F1E2A', borderRadius: 4, paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, fontWeight: '900' },
+  eventTitle: { color: C.white, fontSize: 14, fontWeight: '900' },
+  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  metaText: { color: C.muted, fontSize: 10, flex: 1, lineHeight: 15 },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+  sectionAccent: { width: 4, height: 24, borderRadius: 4, backgroundColor: C.cyan },
+  sectionTitle: { color: C.white, fontSize: 14, fontWeight: '900' },
+  card: { borderWidth: 1, borderColor: C.border, backgroundColor: C.panel, borderRadius: 12, padding: 13, gap: 12 },
+  ticketTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  ticketInfo: { flex: 1, gap: 4 },
+  ticketName: { color: C.white, fontSize: 13, fontWeight: '900' },
+  ticketBenefit: { color: C.muted, fontSize: 10, lineHeight: 15 },
+  ticketPrice: { color: C.purpleLight, fontSize: 13, fontWeight: '900' },
+  quantityRow: { borderTopWidth: 1, borderTopColor: C.border, paddingTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  quantityLabel: { color: C.white, fontSize: 12, fontWeight: '800' },
+  hint: { color: C.muted, fontSize: 9, marginTop: 3 },
+  quantityControl: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.field, borderWidth: 1, borderColor: C.border, borderRadius: 9, padding: 5 },
+  quantityButton: { width: 30, height: 30, borderRadius: 7, backgroundColor: '#343451', alignItems: 'center', justifyContent: 'center' },
+  quantityValue: { color: C.white, fontSize: 13, fontWeight: '900', minWidth: 15, textAlign: 'center' },
+  remaining: { color: C.cyan, fontSize: 10, textAlign: 'right' },
+  attendeeCard: { borderWidth: 1, borderColor: C.border, borderRadius: 10, padding: 12, gap: 11, backgroundColor: '#20203A80' },
+  attendeeTitle: { color: C.cyan, fontSize: 12, fontWeight: '900' },
+  fieldWrap: { gap: 6 },
+  label: { color: '#D1D5E5', fontSize: 11, fontWeight: '800' },
+  required: { color: C.red },
+  optional: { color: '#81889F', fontWeight: '500' },
+  input: { minHeight: 46, borderWidth: 1, borderColor: C.border, borderRadius: 9, backgroundColor: C.field, color: C.white, paddingHorizontal: 12, fontSize: 12 },
+  attendeeNote: { color: C.amber, fontSize: 10, lineHeight: 16 },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  summaryLabel: { color: '#D1D5E5', fontSize: 11, flex: 1 },
+  summaryValue: { color: C.white, fontSize: 11, fontWeight: '800' },
+  summaryDivider: { height: 1, backgroundColor: C.border },
+  totalLabel: { color: C.white, fontSize: 13, fontWeight: '900' },
+  totalValue: { color: C.purpleLight, fontSize: 15, fontWeight: '900' },
+  agreement: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, paddingVertical: 5 },
+  checkbox: { width: 19, height: 19, borderRadius: 4, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+  checkboxActive: { backgroundColor: C.purple, borderColor: C.purple },
+  agreementText: { flex: 1, color: C.muted, fontSize: 10, lineHeight: 16 },
+  error: { color: '#FCA5A5', backgroundColor: '#7F1D1D33', borderColor: '#F8717133', borderWidth: 1, borderRadius: 8, padding: 11, fontSize: 11, lineHeight: 16 },
+  statusButton: { borderWidth: 1, borderColor: 'rgba(34,211,238,0.5)', backgroundColor: 'rgba(34,211,238,0.1)', borderRadius: 10, padding: 13, alignItems: 'center' },
+  statusButtonText: { color: C.cyan, fontSize: 11, fontWeight: '900' },
+  paymentStatus: { color: C.muted, fontSize: 10, textAlign: 'center' },
+  continueButton: { backgroundColor: '#6255DF', borderRadius: 10, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  disabledButton: { opacity: 0.5 },
+  continueText: { color: C.white, fontSize: 12, fontWeight: '900' },
+  secureText: { color: C.muted, fontSize: 10, textAlign: 'center' },
+  modal: { flex: 1, backgroundColor: C.bg, paddingTop: Platform.OS === 'ios' ? 38 : 8 },
+  modalHeader: { height: 58, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  modalTitle: { color: C.white, fontSize: 13, fontWeight: '900' },
 });

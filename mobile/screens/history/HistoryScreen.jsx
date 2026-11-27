@@ -1,461 +1,342 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  StatusBar,
-  Alert,
   Image,
-  Modal,
+  StatusBar,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-
-import { LinearGradient } from 'expo-linear-gradient';
-import HeaderActions from '../../components/HeaderActions';
 import { useFocusEffect } from '@react-navigation/native';
-import { INITIAL_ORDERS } from '../../data/orders';
-import { loadOrders, saveOrders } from '../../utils/orderStorage';
-
+import HeaderActions from '../../components/HeaderActions';
+import { fetchMyOrders } from '../../services/ordersService';
 import {
-  MapPin,
-  Receipt,
+  ClipboardList,
+  Check,
+  Clock3,
+  DollarSign,
+  Ticket,
+  Eye,
+  X,
+  ArrowRight,
   ChevronRight,
-  CircleCheck,
-  Clock,
-  XCircle,
+  ShoppingBag,
+  RotateCw,
 } from 'lucide-react-native';
 
-const COLORS = {
-  background: '#080D1C',
-  card: '#111A30',
-  cardLight: '#18233D',
-  purple: '#922EFF',
-  purpleLight: '#B9A0FF',
+const C = {
+  bg: '#0B1020',
+  card: '#171B26',
+  panel: '#0C1122',
+  purple: '#8B5CF6',
+  purpleLight: '#A78BFA',
+  cyan: '#22D3EE',
   white: '#FFFFFF',
-  muted: '#8995B0',
-  border: '#27314B',
-  green: '#24D6A0',
-  yellow: '#FFC247',
-  red: '#FF647C',
+  muted: '#AAB0C5',
+  border: '#908FA0',
+  yellow: '#F5C56C',
+  pink: '#F47D9A',
+  green: '#42D9E8',
 };
 
-const FILTERS = ['Semua', 'Berhasil', 'Menunggu', 'Batal'];
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'paid', label: 'Paid' },
+  { key: 'pending', label: 'Pending Payment' },
+];
 
-const getOrderAmount = (order) =>
-  Number(order.amount || String(order.price || '').replace(/[^\d]/g, '') || 0);
-
-const formatCompactCurrency = (amount) => {
-  if (amount >= 1000000) {
-    return `Rp ${(amount / 1000000).toLocaleString('id-ID', {
-      maximumFractionDigits: 2,
-    })}M`;
-  }
-  return `Rp ${amount.toLocaleString('id-ID')}`;
+const STATUS = {
+  paid: { label: 'Payment Successful', color: C.green, bg: '#123A43', border: '#246C7C' },
+  pending: { label: 'Pending Payment', color: C.yellow, bg: '#49351C', border: '#80602A' },
+  cancelled: { label: 'Cancelled', color: C.pink, bg: '#40212E', border: '#794053' },
+  refunded: { label: 'Refunded', color: '#BBA6FF', bg: '#302747', border: '#66518D' },
 };
 
-export default function HistoryScreen({ navigation }) {
-  const [activeFilter, setActiveFilter] = useState('Semua');
-  const [orders, setOrders] = useState(INITIAL_ORDERS);
-  const [orderToCancel, setOrderToCancel] = useState(null);
+const statusKey = (value) => {
+  const key = String(value || '').toLowerCase();
+  return ['paid', 'pending', 'cancelled', 'refunded'].includes(key) ? key : 'cancelled';
+};
 
-  useFocusEffect(
-    useCallback(() => {
-      let isActive = true;
-      loadOrders(INITIAL_ORDERS)
-        .then((storedOrders) => {
-          if (isActive) {
-            setOrders(storedOrders);
-          }
-        })
-        .catch((error) => {
-          Alert.alert(
-            'Pesanan gagal dimuat',
-            error.message || 'Silakan coba buka halaman ini kembali.',
-          );
-        });
+const formatCurrency = (value) =>
+  `Rp ${Number(value || 0).toLocaleString('id-ID')}`;
 
-      return () => {
-        isActive = false;
-      };
-    }, []),
+function formatOrderDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function StatusBadge({ status }) {
+  const config = STATUS[statusKey(status)];
+  return (
+    <View style={[styles.statusBadge, { backgroundColor: config.bg, borderColor: `${config.border}80` }]}>
+      <View style={[styles.statusDot, { backgroundColor: config.color }]} />
+      <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+    </View>
   );
+}
 
-  const filteredOrders =
-    activeFilter === 'Semua'
-      ? orders
-      : orders.filter((order) => order.status === activeFilter);
-  const successfulCount = orders.filter(
-    (order) => order.status === 'Berhasil',
-  ).length;
-  const pendingCount = orders.filter(
-    (order) => order.status === 'Menunggu',
-  ).length;
-  const totalSpent = orders
-    .filter((order) => order.status === 'Berhasil')
-    .reduce((total, order) => total + getOrderAmount(order), 0);
+function StatCard({ title, value, description, icon: Icon }) {
+  return (
+    <View style={styles.statCard}>
+      <View style={styles.statTop}>
+        <Text style={styles.statTitle}>{title}</Text>
+        <View style={styles.statIcon}><Icon size={16} color={C.purpleLight} /></View>
+      </View>
+      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+      <Text style={styles.statDescription}>{description}</Text>
+    </View>
+  );
+}
 
-  const openPayment = (order) => {
-    navigation.navigate('Payment', {
-      orderId: order.id,
-      order,
-      concert: {
-        title: order.event,
-        location: order.location,
-        date: order.date,
-        image: order.poster,
-      },
-      ticket: {
-        name: order.category,
-        price: order.unitPrice || getOrderAmount(order) / order.quantity,
-      },
-      quantity: order.quantity,
-      total: getOrderAmount(order),
-    });
-  };
+function Field({ label, value, highlight }) {
+  return (
+    <View style={styles.detailField}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={[styles.detailValue, highlight && styles.detailHighlight]}>{String(value ?? '-')}</Text>
+    </View>
+  );
+}
 
-  const openCheckout = (order) => {
-    navigation.navigate('Checkout', {
-      orderId: order.id,
-      concert: {
-        title: order.event,
-        location: order.location,
-        date: order.date,
-        image: order.poster,
-        category: order.category,
-      },
-      ticket: {
-        name: order.category,
-        price: order.unitPrice || getOrderAmount(order) / order.quantity,
-      },
-      quantity: order.quantity,
-    });
-  };
+function OrderDetails({ order }) {
+  return (
+    <View style={styles.detailsPanel}>
+      <Text style={styles.detailsTitle}>Order Information</Text>
+      <View style={styles.detailsGrid}>
+        <Field label="Order Number" value={order.id} />
+        <Field label="Purchase Date" value={formatOrderDate(order.date)} />
+        <Field label="Payment Method" value={order.method || 'Not available'} />
+        <Field label="Ticket Quantity" value={`${order.quantity} Tickets`} />
+        <Field label="Total Payment" value={formatCurrency(order.total)} highlight />
+        <View style={styles.detailField}>
+          <Text style={styles.detailLabel}>Order Status</Text>
+          <StatusBadge status={order.status} />
+        </View>
+      </View>
+    </View>
+  );
+}
 
-  const openTicket = (order) => {
-    navigation.navigate('TicketDetail', {
-      ticket: {
-        title: order.event,
-        date: order.date,
-        venue: order.location,
-        image: order.poster,
-      },
-      qrValue: `LYNORA-ORDER-${order.id}`,
-    });
-  };
+function OrderCard({ order, expanded, onToggle, onOpenTicket }) {
+  const status = statusKey(order.status);
+  return (
+    <View style={styles.orderCard}>
+      <View style={styles.orderHeader}>
+        <View style={styles.headerField}>
+          <Text style={styles.fieldLabel}>Order No.</Text>
+          <Text style={styles.orderNumber} numberOfLines={2}>{order.id}</Text>
+        </View>
+        <View style={[styles.headerField, styles.purchaseField]}>
+          <Text style={styles.fieldLabel}>Purchase Date</Text>
+          <Text style={styles.purchaseDate}>{formatOrderDate(order.date)}</Text>
+        </View>
+        <StatusBadge status={status} />
+      </View>
 
-  const confirmCancelOrder = async () => {
-    if (!orderToCancel) {
-      return;
-    }
-
-    const updatedOrders = orders.map((order) =>
-      order.id === orderToCancel.id
-        ? {
-            ...order,
-            status: 'Batal',
-            statusDetail: 'Dibatalkan',
-            action: 'Pesan Ulang',
-          }
-        : order,
-    );
-
-    try {
-      await saveOrders(updatedOrders);
-      setOrders(updatedOrders);
-      setOrderToCancel(null);
-    } catch (error) {
-      Alert.alert(
-        'Pesanan gagal dibatalkan',
-        error.message || 'Silakan coba lagi.',
-      );
-    }
-  };
-
-  const getStatusColor = (status) => {
-    if (status === 'Berhasil') return COLORS.green;
-    if (status === 'Menunggu') return COLORS.yellow;
-    return COLORS.red;
-  };
-
-  const getStatusIcon = (status) => {
-    if (status === 'Berhasil') return CircleCheck;
-    if (status === 'Menunggu') return Clock;
-    return XCircle;
-  };
-
-  const handleAction = (order) => {
-    if (order.status === 'Berhasil') {
-      openTicket(order);
-    } else if (order.status === 'Menunggu') {
-      openPayment(order);
-    } else {
-      openCheckout(order);
-    }
-  };
-
-  const renderOrder = (order) => {
-    const StatusIcon = getStatusIcon(order.status);
-    const statusColor = getStatusColor(order.status);
-
-    return (
-      <View style={styles.orderCard} key={order.id}>
-        <View style={styles.orderHeader}>
-          <View style={styles.orderInfo}>
-            <Text style={styles.orderId}>#ORD-{order.id}</Text>
-            <Text style={styles.orderDate}>{order.date}</Text>
-          </View>
-
-          <View
-            style={[
-              styles.statusBadge,
-              {
-                backgroundColor: `${statusColor}18`,
-                borderColor: `${statusColor}55`,
-              },
-            ]}
-          >
-            <StatusIcon size={11} color={statusColor} />
-            <Text style={[styles.statusText, { color: statusColor }]}>
-              {order.statusDetail}
-            </Text>
+      <View style={styles.concertRow}>
+        {order.poster_url ? (
+          <Image source={{ uri: order.poster_url }} style={styles.poster} resizeMode="cover" />
+        ) : (
+          <View style={[styles.poster, styles.posterFallback]}><Ticket size={23} color={C.purpleLight} /></View>
+        )}
+        <View style={styles.concertInfo}>
+          <Text style={styles.concertName} numberOfLines={2}>{order.event_name}</Text>
+          <Text style={styles.ticketQuantity}>{order.quantity} Tickets · LYNORA Passport</Text>
+          <View style={styles.pills}>
+            <View style={styles.pill}><Text style={styles.pillPurple}>E-Ticket</Text></View>
+            <View style={[styles.pill, styles.methodPill]}><Text style={styles.pillMuted} numberOfLines={1}>{order.method || 'Not available'}</Text></View>
           </View>
         </View>
-
-        <View style={styles.eventContainer}>
-          <Image
-            source={{ uri: order.poster }}
-            style={styles.eventImage}
-            resizeMode="cover"
-          />
-
-          <View style={styles.eventContent}>
-            <Text style={styles.eventName}>{order.event}</Text>
-
-            <View style={styles.eventLocation}>
-              <MapPin size={10} color={COLORS.muted} />
-              <Text style={styles.eventLocationText}>
-                {order.location}
-              </Text>
-            </View>
-
-            <Text style={styles.categoryText}>
-              {order.category} (x{order.quantity})
-            </Text>
-          </View>
-
-          <View style={styles.priceContainer}>
-            <Text style={styles.priceLabel}>Rp</Text>
-            <Text style={styles.priceText}>
-              {order.price.replace('Rp ', '')}
-            </Text>
-          </View>
+        <View style={styles.totalBlock}>
+          <Text style={styles.totalLabel}>Total Payment</Text>
+          <Text style={styles.totalValue} numberOfLines={1} adjustsFontSizeToFit>{formatCurrency(order.total)}</Text>
+          <Text style={styles.totalCaption}>{order.quantity} tickets · incl. tax</Text>
         </View>
+      </View>
 
-        <View style={styles.orderFooter}>
-          {order.status === 'Berhasil' && (
-            <TouchableOpacity
-              style={styles.invoiceButton}
-              onPress={() =>
-                navigation.navigate('TransactionDetail', { order })
-              }
-            >
-              <Text style={styles.invoiceText}>Lihat Invoice</Text>
+      <View style={styles.orderFooter}>
+        <View style={styles.paymentInfo}>
+          <Text style={styles.paymentMethod}>{order.method || 'Not available'}</Text>
+          <Text style={styles.separator}>·</Text>
+          <Text style={styles.orderCode}>Order: {order.id}</Text>
+        </View>
+        <View style={styles.actions}>
+          {status === 'paid' ? (
+            <TouchableOpacity style={styles.openTicketButton} onPress={onOpenTicket}>
+              <Text style={styles.openTicketText}>Open Ticket</Text>
             </TouchableOpacity>
-          )}
-
-          {order.status === 'Menunggu' && (
-            <TouchableOpacity
-              onPress={() => setOrderToCancel(order)}
-              accessibilityRole="button"
-              accessibilityLabel={`Batalkan pesanan ${order.event}`}
-            >
-              <Text style={styles.cancelText}>Batalkan</Text>
-            </TouchableOpacity>
-          )}
-
-          {order.status === 'Batal' && (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('TransactionDetail', { order })}
-            >
-              <Text style={styles.invoiceText}>Detail Riwayat</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => handleAction(order)}
-            style={styles.actionButton}
-          >
-            <LinearGradient
-              colors={['#A52EFF', '#7438F5']}
-              style={styles.actionGradient}
-            >
-              <Text style={styles.actionText}>{order.action}</Text>
-              <ChevronRight size={13} color={COLORS.white} />
-            </LinearGradient>
+          ) : status === 'pending' ? (
+            <View style={styles.awaitingBadge}><Text style={styles.awaitingText}>Awaiting Payment</Text></View>
+          ) : null}
+          <TouchableOpacity onPress={onToggle} style={[styles.detailsButton, expanded && styles.detailsButtonActive]}>
+            {expanded ? <X size={12} color={C.purpleLight} /> : <Eye size={12} color={C.muted} />}
+            <Text style={[styles.detailsButtonText, expanded && styles.detailsButtonTextActive]}>{expanded ? 'Close Details' : 'View Details'}</Text>
           </TouchableOpacity>
         </View>
       </View>
-    );
-  };
+
+      {expanded ? <OrderDetails order={order} /> : null}
+    </View>
+  );
+}
+
+function EmptyOrders({ onExplore }) {
+  return (
+    <View style={styles.emptyState}>
+      <View style={styles.emptyIcon}><ClipboardList size={30} color={C.purpleLight} /></View>
+      <Text style={styles.emptyTitle}>No Orders Found</Text>
+      <Text style={styles.emptyDescription}>You don't have any orders in this category yet. Explore concerts and get your tickets!</Text>
+      <TouchableOpacity style={styles.exploreButton} onPress={onExplore}>
+        <Text style={styles.exploreButtonText}>Explore Concerts</Text>
+        <ArrowRight size={14} color={C.white} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+export default function HistoryScreen({ navigation }) {
+  const [filter, setFilter] = useState('all');
+  const [expandedId, setExpandedId] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadOrders = useCallback(async (refresh = false) => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
+    setError('');
+    try {
+      const data = await fetchMyOrders();
+      setOrders(data);
+    } catch (err) {
+      setError(err?.message || 'Failed to load your orders.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    loadOrders();
+  }, [loadOrders]));
+
+  const stats = useMemo(() => {
+    const paid = orders.filter((item) => statusKey(item.status) === 'paid');
+    return {
+      total: orders.length,
+      paid: paid.length,
+      pending: orders.filter((item) => statusKey(item.status) === 'pending').length,
+      spent: paid.reduce((sum, item) => sum + Number(item.total || 0), 0),
+    };
+  }, [orders]);
+
+  const filteredOrders = useMemo(() => filter === 'all'
+    ? orders
+    : orders.filter((order) => statusKey(order.status) === filter), [orders, filter]);
+
+  const openTickets = (order) => navigation.navigate('MyTickets', {
+    orderId: order.order_id,
+    orderCode: order.id,
+  });
+  const explore = () => navigation.navigate('Explore');
 
   return (
     <View style={styles.container}>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={COLORS.background}
-      />
-
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadOrders(true)} tintColor={C.purple} colors={[C.purple]} />}
       >
         <View style={styles.topHeader}>
-          <View>
-            <Text style={styles.greeting}>Halo, Naya</Text>
-            <Text style={styles.greetingSubtitle}>
-              Temukan info konser terbarumu
-            </Text>
+          <View style={styles.greetingBlock}>
+            <Text style={styles.greeting}>Halo, flowlyy 👋</Text>
+            <Text style={styles.greetingSubtitle}>Your ticket purchase history on LYNORA</Text>
           </View>
           <HeaderActions navigation={navigation} />
         </View>
 
-        <View style={styles.titleSection}>
-          <Text style={styles.eyebrow}>LYNORA PASSBOARD</Text>
-          <Text style={styles.title}>MY ORDERS</Text>
+        <View style={styles.pageHeading}>
+          <View>
+            <Text style={styles.eyebrow}>LYNORA PASSPORT</Text>
+            <Text style={styles.pageTitle}>MY ORDERS</Text>
+            <Text style={styles.pageSubtitle}>Manage your concert purchases and payment history.</Text>
+          </View>
+          <View style={styles.totalOrdersBadge}><Text style={styles.totalOrdersText}>{stats.total} Total Orders</Text></View>
         </View>
 
-        <View style={styles.summaryContainer}>
-          <TouchableOpacity
-            style={styles.summaryCard}
-            onPress={() => setActiveFilter('Semua')}
-            accessibilityRole="button"
-            accessibilityLabel="Tampilkan semua pesanan"
-          >
-            <Text style={styles.summaryNumber}>{orders.length}</Text>
-            <Text style={styles.summaryLabel}>Total Orders</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.summaryCard}
-            onPress={() => setActiveFilter('Berhasil')}
-            accessibilityRole="button"
-            accessibilityLabel="Tampilkan pesanan berhasil"
-          >
-            <Text style={[styles.summaryNumber, { color: COLORS.green }]}>
-              {successfulCount}
-            </Text>
-            <Text style={styles.summaryLabel}>Berhasil</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.summaryCard}
-            onPress={() => setActiveFilter('Menunggu')}
-            accessibilityRole="button"
-            accessibilityLabel="Tampilkan pesanan yang diproses"
-          >
-            <Text style={[styles.summaryNumber, { color: COLORS.yellow }]}>
-              {pendingCount}
-            </Text>
-            <Text style={styles.summaryLabel}>Diproses</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.summaryCard}
-            onPress={() => setActiveFilter('Berhasil')}
-            accessibilityRole="button"
-            accessibilityLabel="Tampilkan pesanan yang sudah dibayar"
-          >
-            <Text style={[styles.summaryNumber, { fontSize: 11 }]}>
-              {formatCompactCurrency(totalSpent)}
-            </Text>
-            <Text style={styles.summaryLabel}>Pengeluaran</Text>
-          </TouchableOpacity>
+        <View style={styles.statsGrid}>
+          <StatCard title="Total Orders" value={stats.total} description="All your purchases" icon={ClipboardList} />
+          <StatCard title="Successful Payments" value={stats.paid} description="Successfully paid orders" icon={Check} />
+          <StatCard title="Pending Payment" value={stats.pending} description="Waiting for payment" icon={Clock3} />
+          <StatCard title="Total Spent" value={formatCurrency(stats.spent)} description="Total successful payments" icon={DollarSign} />
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterScroll}
-          contentContainerStyle={styles.filterContainer}
-        >
-          {FILTERS.map((filter) => {
-            const isActive = activeFilter === filter;
+        <View style={styles.historyHeading}>
+          <View style={styles.historyHeadingText}>
+            <Text style={styles.historyTitle}>Order History</Text>
+            <Text style={styles.historySubtitle}>{filteredOrders.length} orders displayed</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
+            {FILTERS.map((item) => {
+              const active = filter === item.key;
+              return (
+                <TouchableOpacity key={item.key} onPress={() => { setFilter(item.key); setExpandedId(null); }} style={[styles.filterButton, active && styles.filterActive]}>
+                  <Text style={[styles.filterText, active && styles.filterTextActive]}>{item.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
 
-            return (
-              <TouchableOpacity
-                key={filter}
-                onPress={() => setActiveFilter(filter)}
-                style={[
-                  styles.filterButton,
-                  isActive && styles.activeFilterButton,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.filterText,
-                    isActive && styles.activeFilterText,
-                  ]}
-                >
-                  {filter} (
-                  {filter === 'Semua'
-                    ? orders.length
-                    : orders.filter((order) => order.status === filter).length}
-                  )
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        {filteredOrders.length > 0 ? (
-          filteredOrders.map(renderOrder)
+        {loading ? (
+          <View style={styles.stateBox}><ActivityIndicator color={C.purple} size="large" /><Text style={styles.stateText}>Loading your orders...</Text></View>
+        ) : error ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorTitle}>Unable to Load Orders</Text>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => loadOrders()}><RotateCw size={14} color={C.white} /><Text style={styles.retryText}>Try Again</Text></TouchableOpacity>
+          </View>
+        ) : filteredOrders.length ? (
+          <View style={styles.orderList}>
+            {filteredOrders.map((order) => (
+              <OrderCard
+                key={String(order.order_id || order.id)}
+                order={order}
+                expanded={expandedId === String(order.order_id || order.id)}
+                onToggle={() => setExpandedId((current) => current === String(order.order_id || order.id) ? null : String(order.order_id || order.id))}
+                onOpenTicket={() => openTickets(order)}
+              />
+            ))}
+          </View>
         ) : (
-          <View style={styles.emptyContainer}>
-            <Receipt size={35} color={COLORS.purpleLight} />
-            <Text style={styles.emptyTitle}>Belum Ada Pesanan</Text>
-            <Text style={styles.emptyDescription}>
-              Pesanan dengan kategori ini belum tersedia.
-            </Text>
-          </View>
+          <EmptyOrders onExplore={explore} />
         )}
 
-        <View style={styles.bottomSpace} />
+        <View style={styles.footerBanner}>
+          <View style={styles.footerIcon}><Ticket size={20} color={C.purpleLight} /></View>
+          <View style={styles.footerCopy}>
+            <Text style={styles.footerTitle}>Ready for your next concert?</Text>
+            <Text style={styles.footerDescription}>Discover more events and unforgettable experiences.</Text>
+          </View>
+          <TouchableOpacity style={styles.footerButton} onPress={explore}>
+            <Text style={styles.footerButtonText}>EXPLORE CONCERTS</Text>
+            <ArrowRight size={13} color={C.white} />
+          </TouchableOpacity>
+        </View>
+        <View style={{ height: 20 }} />
       </ScrollView>
-
-      <Modal
-        visible={Boolean(orderToCancel)}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setOrderToCancel(null)}
-      >
-        {orderToCancel && (
-          <View style={styles.modalBackdrop}>
-            <View style={styles.confirmModal}>
-              <Text style={styles.confirmTitle}>Batalkan Pesanan?</Text>
-              <Text style={styles.confirmDescription}>
-                Pesanan #{orderToCancel.id} untuk {orderToCancel.event} akan
-                ditandai sebagai dibatalkan di perangkat ini.
-              </Text>
-              <View style={styles.confirmActions}>
-                <TouchableOpacity
-                  style={styles.keepOrderButton}
-                  onPress={() => setOrderToCancel(null)}
-                >
-                  <Text style={styles.keepOrderText}>Jangan</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.cancelOrderButton}
-                  onPress={confirmCancelOrder}
-                >
-                  <Text style={styles.cancelOrderText}>Ya, Batalkan</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        )}
-      </Modal>
     </View>
   );
 }
@@ -463,395 +344,607 @@ export default function HistoryScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: C.bg,
   },
 
   scrollContent: {
-    paddingHorizontal: 13,
-    paddingTop: 38,
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingBottom: 30,
   },
 
+  // HEADER
   topHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 17,
+    justifyContent: 'space-between',
+    marginBottom: 24,
+    minHeight: 44,
   },
-
+  greetingBlock: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
+  },
   greeting: {
-    color: COLORS.white,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-
-  greetingSubtitle: {
-    color: COLORS.muted,
-    fontSize: 8,
-    marginTop: 3,
-  },
-
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-
-  notificationButton: {
-    width: 31,
-    height: 31,
-    borderRadius: 16,
-    backgroundColor: COLORS.cardLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  avatar: {
-    width: 33,
-    height: 33,
-    borderRadius: 17,
-    backgroundColor: '#A84BCE',
-    borderWidth: 2,
-    borderColor: COLORS.purpleLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  avatarText: {
-    color: COLORS.white,
-    fontWeight: '800',
-    fontSize: 13,
-  },
-
-  titleSection: {
-    marginBottom: 12,
-  },
-
-  eyebrow: {
-    color: COLORS.purpleLight,
-    fontSize: 7,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    marginBottom: 3,
-  },
-
-  title: {
-    color: COLORS.white,
-    fontSize: 20,
+    color: C.white,
+    fontSize: 17,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: -0.3,
   },
-
-  summaryContainer: {
-    flexDirection: 'row',
-    gap: 5,
-    marginBottom: 13,
-  },
-
-  summaryCard: {
-    flex: 1,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 9,
-    paddingVertical: 8,
-    paddingHorizontal: 5,
-    minHeight: 53,
-    justifyContent: 'center',
-  },
-
-  summaryNumber: {
-    color: COLORS.purpleLight,
-    fontSize: 14,
-    fontWeight: '800',
-    marginBottom: 3,
-  },
-
-  summaryLabel: {
-    color: COLORS.muted,
-    fontSize: 6,
-  },
-
-  filterScroll: {
-    marginBottom: 17,
-    marginHorizontal: -13,
-  },
-
-  filterContainer: {
-    paddingHorizontal: 13,
-    gap: 6,
-  },
-
-  filterButton: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-
-  activeFilterButton: {
-    backgroundColor: COLORS.purple,
-    borderColor: COLORS.purple,
-  },
-
-  filterText: {
-    color: '#A7B0C5',
-    fontSize: 8,
-    fontWeight: '600',
-  },
-
-  activeFilterText: {
-    color: COLORS.white,
-  },
-
-  orderCard: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    padding: 9,
-    marginBottom: 10,
-  },
-
-  orderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 9,
-  },
-
-  orderInfo: {
-    flex: 1,
-    marginRight: 5,
-  },
-
-  orderId: {
-    color: COLORS.white,
-    fontSize: 8,
-    fontWeight: '800',
-  },
-
-  orderDate: {
-    color: COLORS.muted,
-    fontSize: 7,
-    marginTop: 4,
-  },
-
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 7,
-    paddingVertical: 5,
-    maxWidth: 105,
-  },
-
-  statusText: {
-    fontSize: 7,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-
-  eventContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-
-  eventImage: {
-    width: 42,
-    height: 55,
-    borderRadius: 6,
-    backgroundColor: COLORS.cardLight,
-  },
-
-  eventContent: {
-    flex: 1,
-  },
-
-  eventName: {
-    color: COLORS.white,
-    fontSize: 9,
-    fontWeight: '800',
-    lineHeight: 12,
-  },
-
-  eventLocation: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
-  },
-
-  eventLocationText: {
-    color: COLORS.muted,
-    fontSize: 6,
-    flexShrink: 1,
-  },
-
-  categoryText: {
-    color: COLORS.purpleLight,
-    fontSize: 6,
+  greetingSubtitle: {
+    color: C.muted,
+    fontSize: 10,
     marginTop: 5,
   },
 
-  priceContainer: {
-    alignItems: 'flex-end',
-    maxWidth: 88,
+  // PAGE HEADING
+  pageHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 19,
   },
-
-  priceLabel: {
-    color: COLORS.white,
-    fontSize: 7,
+  eyebrow: {
+    color: C.purpleLight,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.2,
   },
-
-  priceText: {
-    color: COLORS.white,
-    fontSize: 9,
+  pageTitle: {
+    color: C.white,
+    fontSize: 27,
+    fontWeight: '900',
+    letterSpacing: -0.7,
+    marginTop: 4,
+  },
+  pageSubtitle: {
+    color: C.muted,
+    fontSize: 10,
+    lineHeight: 15,
+    marginTop: 5,
+    maxWidth: 245,
+  },
+  totalOrdersBadge: {
+    backgroundColor: '#202A4F',
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.38)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignSelf: 'center',
+  },
+  totalOrdersText: {
+    color: '#C4B5FD',
+    fontSize: 10,
     fontWeight: '800',
+  },
+
+  // MOBILE STATISTICS — compact 2 x 2 grid
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 10,
+    marginBottom: 25,
+  },
+  statCard: {
+    width: '48.4%',
+    minHeight: 112,
+    backgroundColor: '#171B2A',
+    borderWidth: 1,
+    borderColor: 'rgba(144,143,160,0.19)',
+    borderRadius: 13,
+    paddingHorizontal: 11,
+    paddingVertical: 11,
+  },
+  statTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 5,
+  },
+  statTitle: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '700',
+    flex: 1,
+    lineHeight: 13,
+  },
+  statIcon: {
+    width: 27,
+    height: 27,
+    borderRadius: 8,
+    backgroundColor: 'rgba(139,92,246,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statValue: {
+    color: C.white,
+    fontSize: 19,
+    fontWeight: '900',
+    marginTop: 8,
+    letterSpacing: -0.4,
+  },
+  statDescription: {
+    color: '#8791AA',
+    fontSize: 10,
     marginTop: 3,
   },
 
-  orderFooter: {
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 7,
+  // ORDER HISTORY
+  historyHeading: {
+    marginBottom: 14,
+  },
+  historyHeadingText: {
+    marginBottom: 12,
+  },
+  historyTitle: {
+    color: C.white,
+    fontSize: 19,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+  },
+  historySubtitle: {
+    color: C.muted,
+    fontSize: 10,
+    marginTop: 4,
+  },
+  filters: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    minHeight: 32,
+    gap: 8,
+    paddingRight: 3,
+  },
+  filterButton: {
+    minHeight: 42,
+    justifyContent: 'center',
+    backgroundColor: '#171B2A',
+    borderWidth: 1,
+    borderColor: 'rgba(144,143,160,0.25)',
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  filterActive: {
+    backgroundColor: C.purple,
+    borderColor: C.purple,
+  },
+  filterText: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  filterTextActive: {
+    color: C.white,
   },
 
-  invoiceButton: {
-    paddingVertical: 5,
+  // ORDER CARD
+  orderList: {
+    gap: 13,
   },
-
-  invoiceText: {
-    color: COLORS.muted,
-    fontSize: 8,
-  },
-
-  cancelText: {
-    color: COLORS.red,
-    fontSize: 8,
-    fontWeight: '600',
-  },
-
-  actionButton: {
-    borderRadius: 7,
+  orderCard: {
+    backgroundColor: '#171B2A',
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.24)',
+    borderRadius: 14,
     overflow: 'hidden',
   },
-
-  actionGradient: {
+  orderHeader: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(144,143,160,0.13)',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  headerField: {
+    flex: 1,
+    minWidth: '42%',
+  },
+  purchaseField: {
+    flex: 1,
+  },
+  fieldLabel: {
+    color: '#929BB2',
+    fontSize: 10,
+  },
+  orderNumber: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  purchaseDate: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-  },
-
-  actionText: {
-    color: COLORS.white,
-    fontSize: 8,
-    fontWeight: '800',
-  },
-
-  emptyContainer: {
-    backgroundColor: COLORS.card,
-    borderRadius: 15,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: 'center',
-    padding: 28,
+    borderRadius: 20,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    maxWidth: '100%',
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '900',
   },
 
-  emptyTitle: {
-    color: COLORS.white,
-    fontSize: 14,
+  // CONCERT INFORMATION
+  concertRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 13,
+  },
+  poster: {
+    width: 68,
+    height: 76,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: C.panel,
+  },
+  posterFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  concertInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  concertName: {
+    color: C.white,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '900',
+  },
+  ticketQuantity: {
+    color: C.muted,
+    fontSize: 10,
+    marginTop: 5,
+  },
+  pills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginTop: 7,
+  },
+  pill: {
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.3)',
+    backgroundColor: 'rgba(139,92,246,0.1)',
+    borderRadius: 20,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    maxWidth: 105,
+  },
+  methodPill: {
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  pillPurple: {
+    color: '#B9A4FF',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  pillMuted: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  totalBlock: {
+    alignItems: 'flex-end',
+    minWidth: 83,
+    maxWidth: 105,
+  },
+  totalLabel: {
+    color: C.muted,
+    fontSize: 10,
+  },
+  totalValue: {
+    color: C.white,
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  totalCaption: {
+    color: C.muted,
+    fontSize: 10,
+    marginTop: 3,
+    textAlign: 'right',
+  },
+
+  // ORDER ACTIONS
+  orderFooter: {
+    backgroundColor: '#0E1427',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(144,143,160,0.15)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  paymentInfo: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingRight: 4,
+  },
+  paymentMethod: {
+    color: C.white,
+    fontSize: 11,
     fontWeight: '800',
+    flexShrink: 1,
+  },
+  separator: {
+    color: C.border,
+    fontSize: 11,
+  },
+  orderCode: {
+    color: C.muted,
+    fontSize: 10,
+    lineHeight: 15,
+    flexShrink: 1,
+  },
+  actions: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'nowrap',
+    gap: 8,
+  },
+  openTicketButton: {
+    backgroundColor: C.purple,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  openTicketText: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  awaitingBadge: {
+    backgroundColor: 'rgba(245,197,108,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,197,108,0.3)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  awaitingText: {
+    color: C.yellow,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  detailsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(144,143,160,0.35)',
+    borderRadius: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  detailsButtonActive: {
+    borderColor: C.purple,
+    backgroundColor: 'rgba(139,92,246,0.15)',
+  },
+  detailsButtonText: {
+    color: C.muted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  detailsButtonTextActive: {
+    color: '#C4B5FD',
+  },
+
+  // ORDER DETAILS
+  detailsPanel: {
+    marginHorizontal: 10,
+    marginBottom: 10,
+    backgroundColor: '#0C1223',
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.2)',
+    borderRadius: 10,
+    padding: 12,
+  },
+  detailsTitle: {
+    color: C.white,
+    fontSize: 11,
+    fontWeight: '900',
+    marginBottom: 12,
+  },
+  detailsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  detailField: {
+    width: '47%',
+    minWidth: 0,
+    gap: 4,
+  },
+  detailLabel: {
+    color: C.muted,
+    fontSize: 10,
+  },
+  detailValue: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 13,
+  },
+  detailHighlight: {
+    color: C.purpleLight,
+  },
+
+  // EMPTY / LOADING / ERROR
+  emptyState: {
+    backgroundColor: '#171B2A',
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.22)',
+    borderRadius: 14,
+    alignItems: 'center',
+    paddingHorizontal: 22,
+    paddingVertical: 34,
+  },
+  emptyIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 16,
+    backgroundColor: 'rgba(139,92,246,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyTitle: {
+    color: C.white,
+    fontSize: 15,
+    fontWeight: '900',
+    marginTop: 13,
+  },
+  emptyDescription: {
+    color: C.muted,
+    fontSize: 10,
+    textAlign: 'center',
+    lineHeight: 15,
+    marginTop: 7,
+  },
+  exploreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: C.purple,
+    borderRadius: 8,
+    paddingHorizontal: 17,
+    paddingVertical: 10,
+    marginTop: 17,
+  },
+  exploreButtonText: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  stateBox: {
+    backgroundColor: '#171B2A',
+    borderWidth: 1,
+    borderColor: 'rgba(144,143,160,0.2)',
+    borderRadius: 12,
+    alignItems: 'center',
+    paddingVertical: 34,
+    gap: 10,
+  },
+  stateText: {
+    color: C.muted,
+    fontSize: 10,
+  },
+  errorBox: {
+    backgroundColor: '#171B2A',
+    borderWidth: 1,
+    borderColor: 'rgba(244,125,154,0.3)',
+    borderRadius: 12,
+    padding: 16,
+  },
+  errorTitle: {
+    color: C.pink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  errorText: {
+    color: C.muted,
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 7,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: C.purple,
+    borderRadius: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
     marginTop: 12,
   },
-
-  emptyDescription: {
-    color: COLORS.muted,
-    fontSize: 9,
-    marginTop: 7,
-    textAlign: 'center',
+  retryText: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '900',
   },
 
-  bottomSpace: {
-    height: 25,
+  // FOOTER
+  footerBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    backgroundColor: '#171B2A',
+    borderWidth: 1,
+    borderColor: 'rgba(144,143,160,0.18)',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 19,
   },
-
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+  footerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    backgroundColor: 'rgba(139,92,246,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
   },
-
-  confirmModal: {
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    padding: 20,
+  footerCopy: {
+    flex: 1,
+    minWidth: 130,
   },
-
-  confirmTitle: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: '800',
+  footerTitle: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '900',
   },
-
-  confirmDescription: {
-    color: COLORS.muted,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 10,
+  footerDescription: {
+    color: C.muted,
+    fontSize: 10,
+    lineHeight: 11,
+    marginTop: 3,
   },
-
-  confirmActions: {
+  footerButton: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-    marginTop: 20,
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: C.purple,
+    borderRadius: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-
-  keepOrderButton: {
-    paddingHorizontal: 15,
-    paddingVertical: 11,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  keepOrderText: {
-    color: COLORS.white,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-
-  cancelOrderButton: {
-    backgroundColor: COLORS.red,
-    paddingHorizontal: 15,
-    paddingVertical: 11,
-    borderRadius: 8,
-  },
-
-  cancelOrderText: {
-    color: COLORS.white,
-    fontSize: 11,
-    fontWeight: '700',
+  footerButtonText: {
+    color: C.white,
+    fontSize: 10,
+    fontWeight: '900',
   },
 });

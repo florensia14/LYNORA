@@ -249,7 +249,7 @@ const styles = {
 
   hero: {
 
-    root: "relative z-30 isolate overflow-visible rounded-2xl border border-white/10 bg-[#0B1020]",
+    root: "relative z-[300] isolate overflow-visible rounded-2xl border border-white/10 bg-[#0B1020]",
 
     image: "absolute inset-0 -z-20 h-full w-full object-cover object-center",
 
@@ -287,7 +287,7 @@ const styles = {
 
   filters: {
 
-    section: "relative z-20 mt-3 grid w-full min-w-0 max-w-none grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3",
+    section: "relative z-[200] isolate mt-3 grid w-full min-w-0 max-w-none grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3",
 
     group: "min-w-0 space-y-1",
 
@@ -303,7 +303,7 @@ const styles = {
 
   toolbar: {
 
-    wrapper: "relative z-10 mt-3 flex w-full items-center justify-between gap-3",
+    wrapper: "relative z-0 mt-3 flex w-full items-center justify-between gap-3",
 
     left: "flex items-center gap-2",
 
@@ -901,7 +901,7 @@ function FilterSelect({
   }, [open]);
 
   return (
-    <div ref={rootRef} className={cx("relative z-[100] min-w-0", open && "isolate")}>
+    <div ref={rootRef} className={cx("relative min-w-0", open && "z-[300]")}>
       <button
         type="button"
         aria-label={label}
@@ -929,7 +929,7 @@ function FilterSelect({
           role="listbox"
           aria-label={label}
           className={cx(
-            "absolute top-[calc(100%+5px)] z-[120] max-h-64 w-full min-w-[170px] overflow-y-auto rounded-xl border border-[#8B5CF6]/40 bg-[#171B31] p-1 shadow-[0_14px_32px_rgba(0,0,0,0.55)]",
+            "absolute top-[calc(100%+5px)] z-[400] max-h-64 w-full min-w-[170px] overflow-y-auto rounded-xl border border-[#8B5CF6]/40 bg-[#171B31] p-1 shadow-[0_14px_32px_rgba(0,0,0,0.55)]",
             menuAlign === "right" ? "right-0" : "left-0",
           )}
         >
@@ -1887,7 +1887,7 @@ export default function ExplorePage() {
 
         {/* Count + sort */}
 
-        <div className={cx(styles.toolbar.wrapper, "relative z-[80] isolate")}>
+        <div className={cx(styles.toolbar.wrapper, "relative z-10")}>
 
           <div className={styles.toolbar.left}>
 
@@ -1899,7 +1899,7 @@ export default function ExplorePage() {
 
 
 
-          <div className={cx(styles.toolbar.right, "relative z-[90]")}>
+          <div className={styles.toolbar.right}>
 
             <FilterSelect
 
