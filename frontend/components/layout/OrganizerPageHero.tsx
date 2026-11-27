@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 type OrganizerPageHeroProps = {
   eyebrow?: string;
   title: ReactNode;
+  highlight?: ReactNode;
   description: string;
   children?: ReactNode;
   className?: string;
@@ -15,6 +16,7 @@ const ORGANIZER_HERO_IMAGE = "/images/hero/ao.jpg";
 export default function OrganizerPageHero({
   eyebrow = "ORGANIZER WORKSPACE",
   title,
+  highlight,
   description,
   children,
   className = "",
@@ -64,6 +66,14 @@ export default function OrganizerPageHero({
 
           <h1 className="break-words text-2xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.55)] sm:text-3xl lg:text-4xl">
             {title}
+            {highlight && (
+              <>
+                {" "}
+                <span className="bg-gradient-to-r from-[#8B5CF6] via-[#A855F7] to-[#22D3EE] bg-clip-text text-transparent">
+                  {highlight}
+                </span>
+              </>
+            )}
           </h1>
 
           <p className="mt-2 max-w-2xl text-[11px] leading-5 text-[#E2E8F0] drop-shadow-[0_1px_8px_rgba(0,0,0,0.75)] sm:text-xs lg:text-sm">

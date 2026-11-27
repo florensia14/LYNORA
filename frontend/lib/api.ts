@@ -23,23 +23,18 @@ export type ApiMyTicket = {
   ticket_code: string;
   ticket_status: "valid" | "used" | "cancelled" | "refunded";
   issued_at: string;
-
   order_id: number;
   order_code: string;
   order_status: string;
-
   quantity: number;
   price_at_purchase: number | string;
-
   ticket_category_id: number;
   category_name: string;
-
   event_id: number;
   event_name: string;
   start_date: string;
   end_date: string;
   poster_url: string | null;
-
   venue_name: string | null;
   venue_address: string | null;
 };
@@ -58,34 +53,59 @@ function numeric(value: unknown): number | undefined {
 
 function normalizeEvent(event: ApiEvent): Concert {
   const artists = Array.isArray(event.artists) ? event.artists : [];
-  const poster = typeof event.poster_url === "string" && event.poster_url
-    ? imageUrl(event.poster_url)
-    : null;
+  const poster =
+    typeof event.poster_url === "string" && event.poster_url
+      ? imageUrl(event.poster_url)
+      : null;
 
   return {
     ...event,
     id: Number(event.id),
     name: String(event.name || "Untitled event"),
-    description: typeof event.description === "string" ? event.description : null,
+    description:
+      typeof event.description === "string" ? event.description : null,
     poster_url: poster,
     start_date: String(event.start_date),
     end_date: String(event.end_date),
     category_id: numeric(event.category_id),
-    category_name: typeof event.category_name === "string" ? event.category_name : undefined,
+    category_name:
+      typeof event.category_name === "string"
+        ? event.category_name
+        : undefined,
     venue_id: numeric(event.venue_id),
-    venue_name: typeof event.venue_name === "string" ? event.venue_name : undefined,
-    venue_address: typeof event.venue_address === "string" ? event.venue_address : undefined,
+    venue_name:
+      typeof event.venue_name === "string" ? event.venue_name : undefined,
+    venue_address:
+      typeof event.venue_address === "string"
+        ? event.venue_address
+        : undefined,
     organizer_id: numeric(event.organizer_id),
-    organizer_name: typeof event.organizer_name === "string" ? event.organizer_name : undefined,
+    organizer_name:
+      typeof event.organizer_name === "string"
+        ? event.organizer_name
+        : undefined,
     price: numeric(event.starting_price) ?? numeric(event.price),
-    sales_status: typeof event.sales_status === "string" ? event.sales_status : undefined,
+    sales_status:
+      typeof event.sales_status === "string" ? event.sales_status : undefined,
+    lifecycle_status:
+      typeof event.lifecycle_status === "string"
+        ? (event.lifecycle_status as Concert["lifecycle_status"])
+        : undefined,
     remaining_tickets: numeric(event.remaining_tickets),
     total_quota: numeric(event.total_quota),
     total_sold: numeric(event.total_sold),
-    ticket_categories: Array.isArray(event.ticket_categories) ? event.ticket_categories : [],
+    ticket_categories: Array.isArray(event.ticket_categories)
+      ? event.ticket_categories
+      : [],
     artists,
-    artist: artists.map((artist: { name?: string }) => artist.name).filter(Boolean).join(", "),
-    artist_country: artists.map((artist: { country?: string }) => artist.country).filter(Boolean).join(", "),
+    artist: artists
+      .map((artist: { name?: string }) => artist.name)
+      .filter(Boolean)
+      .join(", "),
+    artist_country: artists
+      .map((artist: { country?: string }) => artist.country)
+      .filter(Boolean)
+      .join(", "),
   } as Concert;
 }
 
@@ -105,11 +125,15 @@ export async function fetchConcerts(): Promise<Concert[]> {
   }
 
   if (!response.ok) {
-    throw new Error(payload.message || `Gagal mengambil konser (HTTP ${response.status}).`);
+    throw new Error(
+      payload.message || `Gagal mengambil konser (HTTP ${response.status}).`,
+    );
   }
 
   if (!Array.isArray(payload.events)) {
-    throw new Error("Format respons GET /api/events tidak sesuai. Server harus mengirim { events: [] }.");
+    throw new Error(
+      "Format respons GET /api/events tidak sesuai. Server harus mengirim { events: [] }.",
+    );
   }
 
   return payload.events.map(normalizeEvent);
@@ -119,8 +143,9 @@ export async function fetchConcerts(): Promise<Concert[]> {
  * Loads one published event by ID.
  * GET /api/events/:id
  */
-
-export async function fetchConcertById(id: string | number): Promise<Concert> {
+export async function fetchConcertById(
+  id: string | number,
+): Promise<Concert> {
   if (!String(id).trim() || !Number.isFinite(Number(id))) {
     throw new Error("ID konser tidak valid.");
   }
@@ -133,7 +158,7 @@ export async function fetchConcertById(id: string | number): Promise<Concert> {
         Accept: "application/json",
       },
       cache: "no-store",
-    }
+    },
   );
 
   let payload: EventDetailResponse;
@@ -147,7 +172,7 @@ export async function fetchConcertById(id: string | number): Promise<Concert> {
   if (!response.ok) {
     throw new Error(
       payload.message ||
-        `Gagal mengambil detail konser (HTTP ${response.status}).`
+        `Gagal mengambil detail konser (HTTP ${response.status}).`,
     );
   }
 
@@ -188,21 +213,19 @@ export async function fetchMyTickets(): Promise<ApiMyTicket[]> {
 
   if (!response.ok) {
     throw new Error(
-      payload.message || `Gagal mengambil tiket (HTTP ${response.status}).`
+      payload.message || `Gagal mengambil tiket (HTTP ${response.status}).`,
     );
   }
 
   if (!Array.isArray(payload.data)) {
     throw new Error(
-      "Format respons GET /api/tickets/my-tickets tidak sesuai."
+      "Format respons GET /api/tickets/my-tickets tidak sesuai.",
     );
   }
 
   return payload.data.map((ticket) => ({
     ...ticket,
-    poster_url: ticket.poster_url
-      ? imageUrl(ticket.poster_url)
-      : null,
+    poster_url: ticket.poster_url ? imageUrl(ticket.poster_url) : null,
   }));
 }
 
@@ -210,20 +233,32 @@ export function matchesQuery(concert: Concert, query: string): boolean {
   const keyword = query.trim().toLowerCase();
   if (!keyword) return true;
 
-  const artists = Array.isArray((concert as Concert & { artists?: { name?: string }[] }).artists)
-    ? (concert as Concert & { artists?: { name?: string }[] }).artists!.map((artist) => artist.name).join(" ")
+  const artists = Array.isArray(
+    (concert as Concert & { artists?: { name?: string }[] }).artists,
+  )
+    ? (concert as Concert & { artists?: { name?: string }[] })
+        .artists!.map((artist) => artist.name)
+        .join(" ")
     : "";
 
-  return [concert.name, concert.description, concert.artist, artists,
-    concert.category_name, concert.venue_name, concert.venue_address,
-    concert.organizer_name]
-    .some((value) => String(value ?? "").toLowerCase().includes(keyword));
+  return [
+    concert.name,
+    concert.description,
+    concert.artist,
+    artists,
+    concert.category_name,
+    concert.venue_name,
+    concert.venue_address,
+    concert.organizer_name,
+  ].some((value) => String(value ?? "").toLowerCase().includes(keyword));
 }
 
 export function isInCity(concert: Concert, city: string): boolean {
   const keyword = city.trim().toLowerCase();
   if (!keyword) return true;
-  return `${concert.venue_name ?? ""} ${concert.venue_address ?? ""}`.toLowerCase().includes(keyword);
+  return `${concert.venue_name ?? ""} ${concert.venue_address ?? ""}`
+    .toLowerCase()
+    .includes(keyword);
 }
 
 export type CheckoutItem = {
@@ -324,7 +359,6 @@ export async function createOrderPayment(
   return payload;
 }
 
-
 export type CheckPaymentStatusResponse = {
   message: string;
   payment_status: string;
@@ -404,4 +438,3 @@ export async function fetchMyOrders(): Promise<ApiMyOrder[]> {
 
   return result.data;
 }
-

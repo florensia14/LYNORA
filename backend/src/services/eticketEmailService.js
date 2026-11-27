@@ -157,12 +157,15 @@ async function sendOrganizerAccountEmail({ name, organizationName, email, passwo
       `Temporary Password: ${password}`,
       "Role: Event Organizer",
       "",
-      "You can now log in to LYNORA using these credentials. For your security, please change your temporary password after logging in.",
+      "You can now log in to LYNORA using these credentials.",
+      "For your security, change your temporary password immediately after your first login.",
+      "",
+      "SECURITY NOTICE: This email contains sensitive account information. Do not share your login email, password, or this message with anyone. LYNORA staff will never ask you to disclose your password. Keep these details private and store them securely.",
       "",
       "Thank you for joining LYNORA!",
       "Best regards,",
       "LYNORA Team",
-    ].join("\\n"),
+    ].join("\n"),
     html: `
       <div style="margin:0;padding:28px 12px;background:#f3f4f6;font-family:Arial,sans-serif;color:#20243a;line-height:1.7">
         <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden">
@@ -182,7 +185,11 @@ async function sendOrganizerAccountEmail({ name, organizationName, email, passwo
               <p style="margin:5px 0"><strong>Role:</strong> Event Organizer</p>
             </div>
             <p>You can now log in to the LYNORA platform using these credentials.</p>
-            <p><strong>For your security, please change your temporary password after logging in.</strong></p>
+            <p><strong>For your security, change your temporary password immediately after your first login.</strong></p>
+            <div style="margin:20px 0;padding:16px;background:#FFF7ED;border:1px solid #FDBA74;border-radius:10px;color:#9A3412">
+              <strong>SECURITY NOTICE</strong>
+              <p style="margin:6px 0 0">This email contains sensitive account information. Do not share your login email, password, or this message with anyone. LYNORA staff will never ask you to disclose your password. Keep these details private and store them securely.</p>
+            </div>
             <p>Thank you for joining LYNORA!</p>
             <p>Best regards,<br><strong>LYNORA Team</strong></p>
           </div>

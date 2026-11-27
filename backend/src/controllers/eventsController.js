@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { createNotification, notifyRole } = require("../services/notificationService");
 const fs = require("fs");
 const path = require("path");
 
@@ -207,7 +208,15 @@ async function attachTicketAvailability(events) {
 
     const eventStart = parseDate(event.start_date);
 
-    // Event lifecycle has priority over ticket inventory and sales windows.
+    // Concert lifecycle and ticket-sales lifecycle are independent.
+    if (eventEnd && now >= eventEnd) {
+      event.lifecycle_status = "completed";
+    } else if (eventStart && now >= eventStart) {
+      event.lifecycle_status = "ongoing";
+    } else {
+      event.lifecycle_status = "upcoming";
+    }
+
     if (eventEnd && now >= eventEnd) {
       event.sales_status = "ended";
     } else if (
@@ -219,11 +228,8 @@ async function attachTicketAvailability(events) {
       event.sales_status = "not_available";
     } else if (now < salesStart) {
       event.sales_status = "coming_soon";
-    } else if (
-      (eventStart && now >= eventStart) ||
-      (salesEnd && now > salesEnd)
-    ) {
-      event.sales_status = "not_available";
+    } else if (salesEnd && now > salesEnd) {
+      event.sales_status = "sales_closed";
     } else {
       event.sales_status = "on_sale";
     }
@@ -753,6 +759,18 @@ async function createEvent(req, res) {
     await connection.commit();
     transactionStarted = false;
 
+    // Notify every active Super Admin when an organizer submits a concert.
+    try {
+      await notifyRole("super_admin", {
+        eventId: result.insertId,
+        title: "New Concert Submission",
+        message: `${cleanString(name)} has been submitted and is waiting for your review.`,
+        type: "concert_submission",
+      });
+    } catch (notificationError) {
+      console.error("Create concert notification error:", notificationError.message);
+    }
+
     return res.status(201).json({
       message:
         "Konser berhasil dibuat dan menunggu persetujuan Super Admin",
@@ -1036,6 +1054,12 @@ async function updateEvent(req, res) {
       status: wasApproved ? events[0].status : "pending",
       approval_status: wasApproved ? "approved" : "pending",
       publication_status: wasApproved ? events[0].publication_status : "draft",
+      display_status: getDisplayStatus({
+        approval_status: wasApproved ? "approved" : "pending",
+        publication_status: wasApproved ? events[0].publication_status : "draft",
+        start_date,
+        end_date,
+      }),
       sales_start_at: salesWindow.salesStart ?? events[0].sales_start_at ?? null,
       sales_end_at: salesWindow.salesEnd ?? events[0].sales_end_at ?? null,
     });
@@ -1225,6 +1249,8 @@ async function approveEvent(req, res) {
     const [events] = await db.execute(
       `SELECT
         id,
+        name,
+        organizer_id,
         approval_status,
         status
        FROM events
@@ -1263,6 +1289,18 @@ async function approveEvent(req, res) {
        WHERE id = ?`,
       [req.user.id, id]
     );
+
+    try {
+      await createNotification({
+        userId: events[0].organizer_id,
+        eventId: id,
+        title: "Concert Approved",
+        message: `${events[0].name} has been approved. You can now publish it when ticket categories and sales schedule are ready.`,
+        type: "concert_approval",
+      });
+    } catch (notificationError) {
+      console.error("Approve concert notification error:", notificationError.message);
+    }
 
     return res.json({
       message:
@@ -1309,6 +1347,8 @@ async function rejectEvent(req, res) {
     const [events] = await db.execute(
       `SELECT
         id,
+        name,
+        organizer_id,
         approval_status,
         status
        FROM events
@@ -1347,6 +1387,18 @@ async function rejectEvent(req, res) {
        WHERE id = ?`,
       [rejectionReason, id]
     );
+
+    try {
+      await createNotification({
+        userId: events[0].organizer_id,
+        eventId: id,
+        title: "Concert Rejected",
+        message: `${events[0].name} was rejected. Reason: ${rejectionReason}`,
+        type: "concert_rejection",
+      });
+    } catch (notificationError) {
+      console.error("Reject concert notification error:", notificationError.message);
+    }
 
     return res.json({
       message: "Konser berhasil ditolak",
@@ -1710,15 +1762,15 @@ function getDisplayStatus(row) {
   const now = Date.now();
 
   if (row.approval_status === "rejected") return "Rejected";
-
+  if (row.approval_status === "revision_required") return "Revision";
   if (row.approval_status !== "approved") return "Pending";
+  if (row.publication_status !== "published") return "Draft";
 
-  if (row.publication_status === "unpublished") return "Draft";
-  if (row.publication_status !== "published") return "Approved";
+  const start = parseDate(row.start_date)?.getTime();
+  const end = parseDate(row.end_date)?.getTime();
 
-  if (new Date(row.end_date).getTime() < now) return "Completed";
-  if (new Date(row.start_date).getTime() <= now) return "Ongoing";
-
+  if (end && now >= end) return "Completed";
+  if (start && now >= start) return "Ongoing";
   return "Published";
 }
 
@@ -2194,11 +2246,12 @@ function getAdminDisplayStatus(row) {
   if (row.approval_status === "revision_required") return "Revision";
   if (row.approval_status !== "approved") return "Pending";
 
-  if (row.publication_status !== "published") return "Approved";
+  if (row.publication_status !== "published") return "Draft";
 
-  if (new Date(row.end_date).getTime() < now) return "Completed";
-  if (new Date(row.start_date).getTime() <= now) return "Ongoing";
-
+  const start = parseDate(row.start_date)?.getTime();
+  const end = parseDate(row.end_date)?.getTime();
+  if (end && now >= end) return "Completed";
+  if (start && now >= start) return "Ongoing";
   return "Published";
 }
 

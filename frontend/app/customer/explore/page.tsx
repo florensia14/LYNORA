@@ -2,7 +2,7 @@
 
 
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import Link from "next/link";
 
@@ -40,7 +40,7 @@ type ConcertMeta = Concert & {
 
 
 
-type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "new";
+type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "ongoing" | "completed" | "new";
 
 type Option = { value: string; label: string };
 
@@ -98,10 +98,6 @@ const CITIES = [
 
 
 
-const GENRES = ["Pop", "Rock", "Hip-Hop", "EDM", "Indie", "K-Pop"];
-
-
-
 // --- Select options ---------------------------------------------------------
 
 
@@ -113,16 +109,6 @@ const CITY_OPTIONS: Option[] = [ALL_CITIES, ...CITIES.map((c) => c.name)].map((n
   label: name,
 
 }));
-
-
-
-const CATEGORY_OPTIONS: Option[] = [
-
-  { value: "all", label: "All" },
-
-  ...GENRES.map((name) => ({ value: name, label: name })),
-
-];
 
 
 
@@ -178,6 +164,8 @@ const STATUS: Record<StatusKey, { text: string; style: string }> = {
   soldOut: { text: "Sold Out", style: "bg-[#3A202B] text-[#FF8298]" },
   ended: { text: "Ended", style: "bg-[#252A3A] text-[#AAB2C5]" },
   salesClosed: { text: "Sales Closed", style: "bg-[#252A3A] text-[#AAB2C5]" },
+  ongoing: { text: "LIVE NOW", style: "bg-[#152B32] text-[#26ADA0]" },
+  completed: { text: "Completed", style: "bg-[#252A3A] text-[#AAB2C5]" },
   new: { text: "New", style: "bg-[#2F1E2A] text-[#FF6B81]" },
 };
 
@@ -201,7 +189,7 @@ const styles = {
 
   // Grid follows the Customer Home card layout: 1 mobile, 2 tablet, 3 desktop
 
-  grid: "grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3",
+  grid: "grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3",
 
 
 
@@ -261,15 +249,15 @@ const styles = {
 
   hero: {
 
-    root: "relative isolate overflow-hidden rounded-2xl border border-white/10 bg-[#0B1020]",
+    root: "relative z-30 isolate overflow-visible rounded-2xl border border-white/10 bg-[#0B1020]",
 
     image: "absolute inset-0 -z-20 h-full w-full object-cover object-center",
 
     overlay: "absolute inset-0 -z-10 bg-gradient-to-b from-[#080D20]/30 via-[#080D20]/40 to-[#080D20]/85",
 
-    content: "flex min-h-[230px] flex-col px-4 py-5 sm:min-h-[245px] lg:min-h-[285px] sm:px-7 sm:py-7 lg:px-9",
+    content: "flex min-h-[190px] flex-col px-4 py-4 sm:min-h-[210px] lg:min-h-[245px] sm:px-6 sm:py-5 lg:px-8",
 
-    titleWrap: "mt-5 sm:mt-6",
+    titleWrap: "mt-3 sm:mt-4",
 
     title:
 
@@ -277,19 +265,19 @@ const styles = {
 
     subtitle: "mt-1 max-w-[560px] text-sm font-bold text-white sm:text-base",
 
-    controls: "mt-6 flex flex-col gap-2.5 pt-2 sm:mt-auto sm:flex-row sm:items-center sm:gap-3 sm:pt-7",
+    controls: "mt-4 flex flex-col gap-2 pt-1 sm:mt-auto sm:flex-row sm:items-center sm:gap-2 sm:pt-4",
 
     searchLabel: "relative flex min-w-0 flex-1 items-center sm:max-w-[600px]",
 
-    searchIcon: "pointer-events-none absolute left-4 h-5 w-5 text-white",
+    searchIcon: "pointer-events-none absolute left-3 h-4 w-4 text-white",
 
     searchInput:
 
-      "h-12 w-full rounded-xl border border-white/25 bg-gradient-to-r from-[#5648D6]/90 to-[#8E80F3]/80 pl-12 pr-4 text-sm font-semibold text-white outline-none placeholder:text-white/70 focus-visible:ring-2 focus-visible:ring-[#22D3EE] sm:h-14",
+      "h-10 w-full rounded-lg border border-white/25 bg-gradient-to-r from-[#5648D6]/90 to-[#8E80F3]/80 pl-10 pr-3 text-sm font-semibold text-white outline-none placeholder:text-white/70 focus-visible:ring-2 focus-visible:ring-[#22D3EE] sm:h-11",
 
     cityField:
 
-      "h-12 w-full shrink-0 gap-2 rounded-xl border border-white/10 bg-[#0B1020]/85 px-3 sm:h-14 sm:w-[220px] sm:gap-3 sm:px-4",
+      "h-10 w-full shrink-0 gap-2 rounded-lg border border-white/20 bg-[#0B1020]/85 px-3 sm:h-11 sm:w-[190px] sm:gap-2 sm:px-3",
 
     cityIcon: "h-5 w-5 shrink-0 object-contain",
 
@@ -299,13 +287,13 @@ const styles = {
 
   filters: {
 
-    section: "mt-5 grid w-full max-w-[1040px] grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4",
+    section: "relative z-20 mt-3 grid w-full min-w-0 max-w-none grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3",
 
-    group: "min-w-0 space-y-1.5",
+    group: "min-w-0 space-y-1",
 
-    label: "pl-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#929BB5]",
+    label: "pl-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#929BB5]",
 
-    field: "h-11 rounded-lg border border-[#303A5B] bg-[#151D38] px-3.5 hover:border-[#8B5CF6] sm:h-12",
+    field: "h-10 rounded-lg border border-[#8B5CF6]/50 bg-[#1B2342] px-3 hover:border-[#A78BFA] sm:h-11",
 
     dateIcon: "h-5 w-5 shrink-0 object-contain",
 
@@ -315,17 +303,17 @@ const styles = {
 
   toolbar: {
 
-    wrapper: "mt-6 flex flex-wrap items-center justify-between gap-3",
+    wrapper: "relative z-10 mt-3 flex w-full items-center justify-between gap-3",
 
-    left: "flex items-center gap-3",
+    left: "flex items-center gap-2",
 
     bar: "h-9 w-[6px] rounded-full bg-gradient-to-b from-[#3B82F6] to-[#8B5CF6]",
 
-    count: "text-xl font-black text-white",
+    count: "text-lg font-black text-white sm:text-xl",
 
-    right: "flex w-full items-center justify-end gap-3 sm:w-auto",
+    right: "flex w-full items-center justify-end gap-2 sm:w-auto",
 
-    sort: "h-12 w-[170px] rounded-xl border border-white/10 bg-[#2A3150] sm:w-[180px]",
+    sort: "h-10 w-[180px] rounded-lg border border-[#8B5CF6]/50 bg-[#1B2342] px-3 sm:w-[190px]",
 
   },
 
@@ -403,9 +391,9 @@ const styles = {
 
   page: {
 
-    main: "mx-auto w-full min-w-0 max-w-none px-3 pb-10 pt-4 sm:px-5 sm:pt-5 xl:px-7 2xl:px-8",
+    main: "mx-auto w-full min-w-0 max-w-none px-3 pb-8 pt-3 sm:px-5 sm:pt-4 xl:px-6 2xl:px-7",
 
-    results: "mt-5",
+    results: "mt-3",
 
     skeleton: "h-[350px] animate-pulse rounded-xl bg-[#202A4F]",
 
@@ -550,14 +538,13 @@ function getDescription(concert: Concert) {
 // Badge per concert: backend sales_status is authoritative; never infer that a future event is on sale.
 
 function getStatus(concert: Concert): StatusKey {
+  const lifecycle = String(concert.lifecycle_status || "").toLowerCase();
+  if (lifecycle === "ongoing") return "ongoing";
+  if (lifecycle === "completed") return "completed";
 
   const salesStatus = String(
-
     (concert as ConcertMeta & { sales_status?: string }).sales_status || ""
-
   ).toLowerCase();
-
-
 
   if (salesStatus === "ended") return "ended";
   if (salesStatus === "sold_out") return "soldOut";
@@ -866,91 +853,119 @@ function StatusBadge({ status }: { status: StatusKey }) {
 // so it looks the same everywhere and still uses the native picker on mobile.
 
 function FilterSelect({
-
   value,
-
   onChange,
-
   options,
-
   label,
-
   placeholder,
-
   icon,
-
   className = "",
-
+  menuAlign = "left",
 }: {
-
   value: string;
-
   onChange: (value: string) => void;
-
   options: Option[];
-
   label: string;
-
   placeholder?: string;
-
   icon?: ReactNode;
-
   className?: string;
-
+  menuAlign?: "left" | "right";
 }) {
-
   const s = styles.filterSelect;
-
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const selected = options.find((option) => option.value === value);
-
   const text =
+    value === "all" && placeholder
+      ? placeholder
+      : (selected?.label ?? placeholder ?? "");
 
-    value === "all" && placeholder ? placeholder : (selected?.label ?? placeholder ?? "");
+  useEffect(() => {
+    if (!open) return;
 
+    const handlePointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
 
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
 
   return (
-
-    <label className={cx(s.label, className)}>
-
-      {icon}
-
-      <span className={s.text}>{text}</span>
-
-      <Chevron className={s.chevron} />
-
-
-
-      <select
-
-        value={value}
-
-        onChange={(event) => onChange(event.target.value)}
-
+    <div ref={rootRef} className={cx("relative z-[100] min-w-0", open && "isolate")}>
+      <button
+        type="button"
         aria-label={label}
-
-        className={s.select}
-
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className={cx(
+          className,
+          "relative flex w-full items-center gap-3 rounded-xl border border-[#8B5CF6]/55 bg-[#1B2342] text-left text-white shadow-[0_6px_18px_rgba(0,0,0,0.16)] transition hover:border-[#A78BFA] hover:bg-[#222B50] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22D3EE]",
+        )}
       >
+        {icon}
+        <span className={cx(s.text, "flex-1")}>{text}</span>
+        <Chevron
+          className={cx(
+            s.chevron,
+            "transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
+      </button>
 
-        {options.map((option) => (
-
-          <option key={option.value} value={option.value} className={s.option}>
-
-            {option.label}
-
-          </option>
-
-        ))}
-
-      </select>
-
-    </label>
-
+      {open && (
+        <div
+          role="listbox"
+          aria-label={label}
+          className={cx(
+            "absolute top-[calc(100%+5px)] z-[120] max-h-64 w-full min-w-[170px] overflow-y-auto rounded-xl border border-[#8B5CF6]/40 bg-[#171B31] p-1 shadow-[0_14px_32px_rgba(0,0,0,0.55)]",
+            menuAlign === "right" ? "right-0" : "left-0",
+          )}
+        >
+          {options.map((option) => {
+            const active = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={cx(
+                  "flex min-h-9 w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-bold transition",
+                  active
+                    ? "bg-[#302D68] text-white"
+                    : "text-[#D1D5E0] hover:bg-white/[0.06] hover:text-white",
+                )}
+              >
+                <span className="truncate">{option.label}</span>
+                {active && (
+                  <span className="shrink-0 text-lg font-black leading-none text-[#22D3EE]">
+                    ✓
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
-
 }
-
 
 
 function CategoryIcon() {
@@ -1039,11 +1054,10 @@ function ExploreHero({
 
     <section className={s.root}>
 
-      <img src="/images/hero/home.jpg" alt="" className={s.image} />
-
-      <div className={s.overlay} />
-
-
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-2xl">
+        <img src="/images/hero/home.jpg" alt="" className={s.image} />
+        <div className={s.overlay} />
+      </div>
 
       <div className={s.content}>
 
@@ -1530,6 +1544,9 @@ export default function ExplorePage() {
   const [city, setCity] = useState(ALL_CITIES);
 
   const [category, setCategory] = useState("all");
+  const [categoryOptions, setCategoryOptions] = useState<Option[]>([
+    { value: "all", label: "All" },
+  ]);
 
   const [dateFilter, setDateFilter] = useState("all");
 
@@ -1608,13 +1625,27 @@ export default function ExplorePage() {
 
     const initial = new URLSearchParams(window.location.search).get("category");
 
-    const genre = GENRES.find((name) => normalize(name) === normalize(initial));
-
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-
-    if (genre) setCategory(genre);
-
-
+    async function loadCategories() {
+      try {
+        const response = await fetch(`${API_URL}/categories/public`, { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.message || "Failed to load categories.");
+        const rows = Array.isArray(payload?.categories) ? payload.categories : [];
+        const options: Option[] = [
+          { value: "all", label: "All" },
+          ...rows
+            .filter((item: any) => item?.name)
+            .map((item: any) => ({ value: String(item.name).trim(), label: String(item.name).trim() })),
+        ];
+        if (active) {
+          setCategoryOptions(options);
+          const matched = options.find((item) => normalize(item.value) === normalize(initial));
+          if (matched) setCategory(matched.value);
+        }
+      } catch (error) {
+        console.error("Failed to load customer categories:", error);
+      }
+    }
 
     async function loadConcerts() {
 
@@ -1638,6 +1669,7 @@ export default function ExplorePage() {
 
 
 
+    loadCategories();
     loadConcerts();
 
 
@@ -1787,7 +1819,7 @@ export default function ExplorePage() {
 
               onChange={withReset(setCategory)}
 
-              options={CATEGORY_OPTIONS}
+              options={categoryOptions}
 
               label="Filter by category"
 
@@ -1855,7 +1887,7 @@ export default function ExplorePage() {
 
         {/* Count + sort */}
 
-        <div className={styles.toolbar.wrapper}>
+        <div className={cx(styles.toolbar.wrapper, "relative z-[80] isolate")}>
 
           <div className={styles.toolbar.left}>
 
@@ -1867,7 +1899,7 @@ export default function ExplorePage() {
 
 
 
-          <div className={styles.toolbar.right}>
+          <div className={cx(styles.toolbar.right, "relative z-[90]")}>
 
             <FilterSelect
 
@@ -1881,6 +1913,8 @@ export default function ExplorePage() {
 
               className={styles.toolbar.sort}
 
+              menuAlign="right"
+
             />
 
           </div>
@@ -1891,7 +1925,7 @@ export default function ExplorePage() {
 
         {/* Results */}
 
-        <section className={s.results}>
+        <section className={cx(s.results, "relative z-0")}>
 
           {loading ? (
 

@@ -90,8 +90,8 @@ const RANGES: { id: Range; label: string }[] = [
 
 const ICONS = {
   users: "/icons/user (1).png",
-  organizers: "/icons/Attendees.png",
-  concerts: "/icons/calendar.png",
+  organizers: "/icons/Attendees (1).png",
+  concerts: "/icons/calendar (1).png",
   tickets: "/icons/ticket (1).png",
   revenue: "/icons/dollar.png",
   download: "/icons/direct-download.png",

@@ -81,6 +81,8 @@ export default function ManageUsersPage() {
   const [selectedRole, setSelectedRole] = useState<"customer" | "organizer">("customer");
   const [form, setForm] = useState<UserForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [showAddPassword, setShowAddPassword] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -125,13 +127,17 @@ export default function ManageUsersPage() {
     setError("");
     setNotice("");
     setSelectedRole("customer");
-    setForm(EMPTY_FORM);
+    setShowAddPassword(false);
+    setShowEditPassword(false);
+    setForm({ ...EMPTY_FORM });
     setShowAdd(true);
   }
 
   function openEdit(user: UserRow) {
     setError("");
     setNotice("");
+    setShowAddPassword(false);
+    setShowEditPassword(false);
     setForm({
       fullName: user.name || "",
       organizerName: user.organization_name || "",
@@ -145,7 +151,10 @@ export default function ManageUsersPage() {
   function closeForms() {
     setShowAdd(false);
     setEditingUser(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM });
+    setSelectedRole("customer");
+    setShowAddPassword(false);
+    setShowEditPassword(false);
   }
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
@@ -168,7 +177,7 @@ export default function ManageUsersPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Gagal membuat akun.");
       closeForms();
-      setNotice("Akun berhasil dibuat dan langsung aktif.");
+      setNotice(data.message || "Akun berhasil dibuat dan langsung aktif.");
       await loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal membuat akun.");
@@ -308,7 +317,7 @@ export default function ManageUsersPage() {
           {selectedRole === "organizer" && <Field label="Organizer Name" required value={form.organizerName} onChange={(v) => updateForm("organizerName", v)} placeholder="Enter organization name" />}
           <Field label={selectedRole === "organizer" ? "Applicant Name" : "Full Name"} required value={form.fullName} onChange={(v) => updateForm("fullName", v)} placeholder={selectedRole === "organizer" ? "Enter applicant full name" : "Enter full name"} />
           <div className="grid grid-cols-2 gap-3"><Field label="Email Address" required type="email" value={form.email} onChange={(v) => updateForm("email", v)} placeholder="name@email.com" /><Field label="Phone Number" required value={form.phone} onChange={(v) => updateForm("phone", v)} placeholder="08xxxxxxxxxx" /></div>
-          <Field label="Password" required type="password" value={form.password} onChange={(v) => updateForm("password", v)} placeholder="Minimum 8 characters" />
+          <PasswordField label="Password" required value={form.password} onChange={(v) => updateForm("password", v)} placeholder="Minimum 8 characters" visible={showAddPassword} onToggle={() => setShowAddPassword((value) => !value)} />
           <p className="rounded-lg border border-cyan-400/15 bg-cyan-400/[0.06] px-3 py-2 text-[10px] leading-4 text-slate-400">Accounts created by Super Admin are activated immediately. Passwords are securely hashed by the backend.</p>
           <ModalActions onCancel={closeForms} saving={saving} submitLabel={`Create ${selectedRole === "customer" ? "Customer" : "Organizer"}`} />
         </form>
@@ -320,7 +329,7 @@ export default function ManageUsersPage() {
           {editingUser.role === "organizer" && <Field label="Organizer Name" required value={form.organizerName} onChange={(v) => updateForm("organizerName", v)} placeholder="Enter organization name" />}
           <Field label={editingUser.role === "organizer" ? "Applicant Name" : "Full Name"} required value={form.fullName} onChange={(v) => updateForm("fullName", v)} placeholder="Enter full name" />
           <div className="grid grid-cols-2 gap-3"><Field label="Email Address" required type="email" value={form.email} onChange={(v) => updateForm("email", v)} placeholder="name@email.com" /><Field label="Phone Number" required value={form.phone} onChange={(v) => updateForm("phone", v)} placeholder="08xxxxxxxxxx" /></div>
-          <Field label="New Password" type="password" value={form.password} onChange={(v) => updateForm("password", v)} placeholder="Leave blank to keep current password" />
+          <PasswordField label="New Password" value={form.password} onChange={(v) => updateForm("password", v)} placeholder="Leave blank to keep current password" visible={showEditPassword} onToggle={() => setShowEditPassword((value) => !value)} />
           <p className="rounded-lg border border-violet-400/15 bg-violet-400/[0.06] px-3 py-2 text-[10px] leading-4 text-slate-400">Existing data is pre-filled. Leave New Password empty if you do not want to change it.</p>
           <ModalActions onCancel={closeForms} saving={saving} submitLabel="Save Changes" />
         </form>
@@ -377,6 +386,45 @@ function StatusBadge({ status }: { status: Approval }) {
 
 function Field({ label, value, onChange, placeholder, type = "text", required = false }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; type?: string; required?: boolean }) {
   return <label className="block"><span className="mb-1 block text-[11px] font-semibold text-slate-300">{label}{required && <span className="ml-1 text-rose-400">*</span>}</span><input type={type} required={required} minLength={type === "password" ? 8 : undefined} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="h-10 w-full rounded-lg border border-[#39365F] bg-[#0B1122] px-3 text-[13px] text-white outline-none transition placeholder:text-slate-600 focus:border-[#8B5CF6] focus:ring-2 focus:ring-[#8B5CF6]/15" /></label>;
+}
+
+function PasswordField({ label, value, onChange, placeholder, required = false, visible, onToggle }: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  required?: boolean;
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-semibold text-slate-300">
+        {label}{required && <span className="ml-1 text-rose-400">*</span>}
+      </span>
+      <span className="relative block">
+        <input
+          type={visible ? "text" : "password"}
+          required={required}
+          minLength={required ? 8 : undefined}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          autoComplete="new-password"
+          className="h-10 w-full rounded-lg border border-[#39365F] bg-[#0B1122] px-3 pr-11 text-[13px] text-white outline-none transition placeholder:text-slate-600 focus:border-[#8B5CF6] focus:ring-2 focus:ring-[#8B5CF6]/15"
+        />
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={visible ? "Hide password" : "Show password"}
+          title={visible ? "Hide password" : "Show password"}
+          className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-lg text-slate-300 transition hover:bg-white/5 hover:text-white"
+        >
+          <img src="/icons/eye.png" alt="" className="h-[18px] w-[18px] object-contain" />
+        </button>
+      </span>
+    </label>
+  );
 }
 
 function Modal({ children, onClose, title, subtitle }: { children: React.ReactNode; onClose: () => void; title: string; subtitle: string }) {

@@ -235,7 +235,8 @@ export default function OrganizerNotificationsPage() {
       {/* PAGE HERO */}
       <OrganizerPageHero
         eyebrow="ORGANIZER CENTER"
-        title="Notifications"
+        title="Your"
+        highlight="Notifications"
         description="Stay up to date with your concerts, ticket sales, and event activity."
       >
         <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-2.5">

@@ -105,53 +105,41 @@ function formatDateTime(value?: string) {
 }
 
 function getStatus(concert: Concert): Tab {
-  const status = String(concert.approval_status || "").toLowerCase();
+  const status = String(concert.approval_status || concert.status || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
 
   if (status === "approved") return "approved";
   if (status === "revision_required" || status === "revision") return "revision";
   if (status === "rejected") return "rejected";
+  if (status === "pending") return "pending";
 
   return "pending";
 }
 
-function getDisplayStatus(concert: Concert) {
-  const rawStatus = String(
-    concert.display_status ||
-    concert.publication_status ||
-    concert.status ||
-    concert.approval_status ||
-    ""
-  ).toLowerCase().replace(/[_-]/g, " ");
-
-  if (rawStatus.includes("reject")) return "Rejected";
-  if (rawStatus.includes("complete") || rawStatus.includes("ended")) return "Completed";
-  if (rawStatus.includes("publish")) return "Published";
-  if (rawStatus.includes("cancel")) return "Cancelled";
-  if (rawStatus.includes("draft")) return "Draft";
-  if (rawStatus.includes("revision")) return "Revision";
-  if (rawStatus.includes("pending")) return "Pending Review";
-  if (rawStatus.includes("approved")) return "Approved";
-
-  return "Pending Review";
-}
-
 function StatusBadge({ concert }: { concert: Concert }) {
-  const status = getDisplayStatus(concert);
+  const status = getStatus(concert);
 
-  const styles: Record<string, string> = {
-    Published: "bg-[#103D32] text-[#35D5B2]",
-    Completed: "bg-[#29324B] text-slate-300",
-    Rejected: "bg-[#4A202D] text-[#FF8196]",
-    Draft: "bg-[#49391B] text-[#F4C44E]",
-    Cancelled: "bg-[#4A202D] text-[#FF8196]",
-    "Pending Review": "bg-[#49391B] text-[#F4C44E]",
-    Revision: "bg-[#49301A] text-[#F5A64A]",
-    Approved: "bg-[#103D32] text-[#35D5B2]",
+  const styles: Record<Tab, string> = {
+    pending: "bg-[#49391B] text-[#F4C44E]",
+    approved: "bg-[#103D32] text-[#35D5B2]",
+    revision: "bg-[#49301A] text-[#F5A64A]",
+    rejected: "bg-[#4A202D] text-[#FF8196]",
+    all: "bg-[#29324B] text-slate-300",
+  };
+
+  const labels: Record<Tab, string> = {
+    pending: "Pending Review",
+    approved: "Approved",
+    revision: "Revision Required",
+    rejected: "Rejected",
+    all: "All Requests",
   };
 
   return (
-    <span className={`inline-flex whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[10px] font-semibold ${styles[status] || "bg-[#29324B] text-slate-300"}`}>
-      {status}
+    <span className={`inline-flex whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[10px] font-semibold ${styles[status]}`}>
+      {labels[status]}
     </span>
   );
 }

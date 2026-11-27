@@ -1,9 +1,7 @@
-
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
 
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
-
 
 export type User = {
   id: number;
@@ -47,7 +45,8 @@ export type Concert = {
   publication_status?: "draft" | "published" | "unpublished";
   sales_start_at?: string | null;
   sales_end_at?: string | null;
-  sales_status?: ConcertSalesStatus;
+  sales_status?: ConcertSalesStatus | "sales_closed";
+  lifecycle_status?: "upcoming" | "ongoing" | "completed";
   category_id?: number;
   category_name?: string;
   venue_id?: number;
@@ -140,7 +139,7 @@ export function updateStoredUser(patch: Partial<User>): User {
   localStorage.setItem("user", JSON.stringify(next));
 
   window.dispatchEvent(
-    new CustomEvent(USER_UPDATED_EVENT, { detail: next })
+    new CustomEvent(USER_UPDATED_EVENT, { detail: next }),
   );
 
   return next;
@@ -178,7 +177,7 @@ export function formatDate(date?: string): string {
 
 export function formatDateRange(
   start?: string,
-  end?: string
+  end?: string,
 ): string {
   const first = formatDate(start);
   const last = formatDate(end);

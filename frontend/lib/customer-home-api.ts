@@ -1,4 +1,3 @@
-
 import type { Concert } from "@/lib/customer";
 
 const API_BASE_URL = (
@@ -33,6 +32,7 @@ type ApiEvent = {
   sales_start_at?: string | null;
   sales_end_at?: string | null;
   sales_status?: Concert["sales_status"];
+  lifecycle_status?: Concert["lifecycle_status"];
 
   total_quota?: number | string;
   total_sold?: number | string;
@@ -135,6 +135,7 @@ function normalizeEvent(event: ApiEvent): CustomerHomeConcert {
     sales_start_at: event.sales_start_at ?? null,
     sales_end_at: event.sales_end_at ?? null,
     sales_status: event.sales_status,
+    lifecycle_status: event.lifecycle_status,
 
     total_quota: toNumber(event.total_quota),
     total_sold: toNumber(event.total_sold),
@@ -195,7 +196,7 @@ export async function fetchCustomerHomeConcerts(): Promise<
         event.id !== null &&
         event.id !== undefined &&
         typeof event.name === "string" &&
-        event.name.trim().length > 0
+        event.name.trim().length > 0,
     )
     .map(normalizeEvent)
     .filter((event) => Number.isFinite(event.id));
@@ -203,7 +204,7 @@ export async function fetchCustomerHomeConcerts(): Promise<
 
 export function matchesCustomerHomeQuery(
   concert: Concert,
-  query: string
+  query: string,
 ): boolean {
   const keyword = query.trim().toLowerCase();
 

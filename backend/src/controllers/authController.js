@@ -2,6 +2,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const db = require("../config/database");
+const { createNotification, notifyRole } = require("../services/notificationService");
 const { sendOrganizerAccountEmail } = require("../services/eticketEmailService");
 
 function createToken(user) {
@@ -136,7 +137,8 @@ async function login(req, res) {
     const normalizedEmail = email.trim().toLowerCase();
 
     const [users] = await db.execute(
-      `SELECT id, name, email, password, role, profile_photo, is_active, approval_status
+      `SELECT id, name, email, password, role, organization_name,
+              profile_photo, is_active, approval_status
        FROM users
        WHERE email = ?`,
       [normalizedEmail]
@@ -191,6 +193,7 @@ async function login(req, res) {
         name: user.name,
         email: user.email,
         role: user.role,
+        organization_name: user.organization_name || null,
         profile_photo: user.profile_photo || null,
       },
     });
@@ -202,7 +205,6 @@ async function login(req, res) {
     });
   }
 }
-
 
 async function getRegistrationStatus(req, res) {
   try {
@@ -257,7 +259,8 @@ async function getRegistrationStatus(req, res) {
 async function getMe(req, res) {
   try {
     const [users] = await db.execute(
-      `SELECT id, name, email, role, profile_photo, is_active
+      `SELECT id, name, email, role, organization_name,
+              profile_photo, is_active
        FROM users
        WHERE id = ?`,
       [req.user.id]
@@ -278,8 +281,6 @@ async function getMe(req, res) {
     });
   }
 }
-
-
 
 // ============================================================
 // SUPER ADMIN - MANAGE USERS
@@ -397,9 +398,29 @@ async function createAdminUser(req, res) {
 
     await connection.commit();
 
-    // Send an account notification only for Event Organizer accounts.
-    // Email delivery failure does not roll back the account creation.
+    // The new account is active immediately; create an in-app welcome notification.
+    try {
+      await createNotification({
+        userId: result.insertId,
+        title: "LYNORA Account Created",
+        message: cleanRole === "organizer"
+          ? `Your organizer account for ${cleanOrganization} is active. You can now sign in using the credentials sent to your email.`
+          : "Your LYNORA account is active. You can now sign in.",
+        type: "account",
+      });
+      if (cleanRole === "organizer") {
+        await notifyRole("super_admin", {
+          title: "Organizer Account Created",
+          message: `${cleanOrganization} (${cleanEmail}) has been created and activated by Super Admin.`,
+          type: "organizer_account",
+        });
+      }
+    } catch (notificationError) {
+      console.error("Create account notification error:", notificationError.message);
+    }
+
     let emailSent = null;
+
     if (cleanRole === "organizer") {
       try {
         await sendOrganizerAccountEmail({
@@ -503,109 +524,189 @@ async function updateAdminUserApproval(req, res) {
   }
 }
 
-
 async function updateAdminUser(req, res) {
   try {
     const userId = Number(req.params.id);
     const { name, organization_name, email, phone, password } = req.body;
 
     if (!Number.isSafeInteger(userId) || userId <= 0) {
-      return res.status(400).json({ success: false, message: "ID pengguna tidak valid." });
+      return res.status(400).json({
+        success: false,
+        message: "ID pengguna tidak valid.",
+      });
     }
 
     const cleanName = String(name || "").trim();
     const cleanEmail = String(email || "").trim().toLowerCase();
     const cleanPhone = String(phone || "").trim();
-    const cleanOrganization = organization_name == null ? null : String(organization_name).trim();
+    const cleanOrganization =
+      organization_name == null ? null : String(organization_name).trim();
 
     if (!cleanName || !cleanEmail || !cleanPhone) {
-      return res.status(400).json({ success: false, message: "Nama, email, dan nomor telepon wajib diisi." });
+      return res.status(400).json({
+        success: false,
+        message: "Nama, email, dan nomor telepon wajib diisi.",
+      });
     }
-    if (cleanName.length > 100 || cleanEmail.length > 150 || cleanPhone.length > 20 || (cleanOrganization && cleanOrganization.length > 150)) {
-      return res.status(400).json({ success: false, message: "Panjang data melebihi batas." });
+
+    if (
+      cleanName.length > 100 ||
+      cleanEmail.length > 150 ||
+      cleanPhone.length > 20 ||
+      (cleanOrganization && cleanOrganization.length > 150)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Panjang data melebihi batas.",
+      });
     }
+
     if (password !== undefined && password !== "" && String(password).length < 8) {
-      return res.status(400).json({ success: false, message: "Password baru minimal 8 karakter." });
+      return res.status(400).json({
+        success: false,
+        message: "Password baru minimal 8 karakter.",
+      });
     }
 
     const [rows] = await db.execute(
       "SELECT id, role FROM users WHERE id = ? LIMIT 1",
       [userId]
     );
+
     if (!rows.length) {
-      return res.status(404).json({ success: false, message: "Pengguna tidak ditemukan." });
+      return res.status(404).json({
+        success: false,
+        message: "Pengguna tidak ditemukan.",
+      });
     }
+
     if (!["customer", "organizer"].includes(rows[0].role)) {
-      return res.status(403).json({ success: false, message: "Akun Super Admin tidak dapat diedit dari menu ini." });
+      return res.status(403).json({
+        success: false,
+        message: "Akun Super Admin tidak dapat diedit dari menu ini.",
+      });
     }
+
     if (rows[0].role === "organizer" && !cleanOrganization) {
-      return res.status(400).json({ success: false, message: "Nama organisasi wajib diisi." });
+      return res.status(400).json({
+        success: false,
+        message: "Nama organisasi wajib diisi.",
+      });
     }
 
     const [duplicate] = await db.execute(
       "SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1",
       [cleanEmail, userId]
     );
+
     if (duplicate.length) {
-      return res.status(409).json({ success: false, message: "Email sudah digunakan akun lain." });
+      return res.status(409).json({
+        success: false,
+        message: "Email sudah digunakan akun lain.",
+      });
     }
 
     if (password) {
       const hashedPassword = await bcrypt.hash(String(password), 12);
+
       await db.execute(
         `UPDATE users
          SET name = ?, email = ?, phone = ?, organization_name = ?, password = ?
          WHERE id = ?`,
-        [cleanName, cleanEmail, cleanPhone, rows[0].role === "organizer" ? cleanOrganization : null, hashedPassword, userId]
+        [
+          cleanName,
+          cleanEmail,
+          cleanPhone,
+          rows[0].role === "organizer" ? cleanOrganization : null,
+          hashedPassword,
+          userId,
+        ]
       );
     } else {
       await db.execute(
         `UPDATE users
          SET name = ?, email = ?, phone = ?, organization_name = ?
          WHERE id = ?`,
-        [cleanName, cleanEmail, cleanPhone, rows[0].role === "organizer" ? cleanOrganization : null, userId]
+        [
+          cleanName,
+          cleanEmail,
+          cleanPhone,
+          rows[0].role === "organizer" ? cleanOrganization : null,
+          userId,
+        ]
       );
     }
 
-    return res.status(200).json({ success: true, message: "Data pengguna berhasil diperbarui." });
+    return res.status(200).json({
+      success: true,
+      message: "Data pengguna berhasil diperbarui.",
+    });
   } catch (error) {
     console.error("Update admin user error:", error);
-    return res.status(500).json({ success: false, message: "Gagal memperbarui data pengguna." });
+    return res.status(500).json({
+      success: false,
+      message: "Gagal memperbarui data pengguna.",
+    });
   }
 }
 
 async function deleteAdminUser(req, res) {
   try {
     const userId = Number(req.params.id);
+
     if (!Number.isSafeInteger(userId) || userId <= 0) {
-      return res.status(400).json({ success: false, message: "ID pengguna tidak valid." });
+      return res.status(400).json({
+        success: false,
+        message: "ID pengguna tidak valid.",
+      });
     }
+
     if (Number(req.user?.id) === userId) {
-      return res.status(403).json({ success: false, message: "Kamu tidak dapat menghapus akun yang sedang digunakan." });
+      return res.status(403).json({
+        success: false,
+        message: "Kamu tidak dapat menghapus akun yang sedang digunakan.",
+      });
     }
 
     const [rows] = await db.execute(
       "SELECT id, role FROM users WHERE id = ? LIMIT 1",
       [userId]
     );
+
     if (!rows.length) {
-      return res.status(404).json({ success: false, message: "Pengguna tidak ditemukan." });
+      return res.status(404).json({
+        success: false,
+        message: "Pengguna tidak ditemukan.",
+      });
     }
+
     if (rows[0].role === "super_admin") {
-      return res.status(403).json({ success: false, message: "Akun Super Admin tidak dapat dihapus dari menu ini." });
+      return res.status(403).json({
+        success: false,
+        message: "Akun Super Admin tidak dapat dihapus dari menu ini.",
+      });
     }
 
     await db.execute("DELETE FROM users WHERE id = ?", [userId]);
-    return res.status(200).json({ success: true, message: "Pengguna berhasil dihapus." });
+
+    return res.status(200).json({
+      success: true,
+      message: "Pengguna berhasil dihapus.",
+    });
   } catch (error) {
     console.error("Delete admin user error:", error);
+
     if (error.code === "ER_ROW_IS_REFERENCED_2" || error.errno === 1451) {
       return res.status(409).json({
         success: false,
         message: "Akun masih terhubung dengan data transaksi atau aktivitas. Akun tidak dihapus agar riwayat tetap aman.",
       });
     }
-    return res.status(500).json({ success: false, message: "Gagal menghapus pengguna." });
+
+    return res.status(500).json({
+      success: false,
+      message: "Gagal menghapus pengguna.",
+    });
   }
 }
 

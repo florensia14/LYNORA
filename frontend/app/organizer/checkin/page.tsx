@@ -173,7 +173,8 @@ export default function OrganizerCheckInPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-5 text-white">
-      <OrganizerPageHero eyebrow="LYNORA EVENT MANAGEMENT" title="Check-In" description="Validate attendee entry for your concert. Scan the QR code on each customer’s e-ticket." />
+      <OrganizerPageHero eyebrow="LYNORA EVENT MANAGEMENT" title="Ticket"
+        highlight="Check-In" description="Validate attendee entry for your concert. Scan the QR code on each customer’s e-ticket." />
 
       <section className="flex flex-col gap-3 rounded-xl border border-white/[0.08] bg-[#151C36] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Selected concert</p><p className="mt-1 truncate text-base font-bold">{selectedConcert?.name || (loading ? "Loading concerts..." : "No concert available")}</p><p className="mt-1 text-xs text-slate-400">{selectedConcert?.venue_name || "Select a concert to manage check-ins"}</p></div>

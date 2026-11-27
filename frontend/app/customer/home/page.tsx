@@ -8,7 +8,7 @@ import { fetchCustomerHomeConcerts, matchesCustomerHomeQuery } from "@/lib/custo
 import { API_URL, imageUrl, type Concert } from "@/lib/customer";
 // 1. TYPES
 type ConcertMeta = Concert;
-type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "new";
+type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "ongoing" | "completed" | "new";
 // 2. CONSTANTS
 const CATEGORY_ICONS: Record<string, string> = {
     pop: "microphone.png",
@@ -21,29 +21,9 @@ const CATEGORY_ICONS: Record<string, string> = {
     indie: "wave-sound.png",
     festivall: "festival.png",
 };
-const HOME_CATEGORY_ORDER = [
-    { label: "POP", aliases: ["pop"] },
-    { label: "ROCK", aliases: ["rock"] },
-    { label: "HIP-HOP", aliases: ["hip-hop", "hip hop"] },
-    { label: "EDM", aliases: ["edm"] },
-    { label: "KPOP", aliases: ["kpop", "k-pop"] },
-    { label: "INDIE", aliases: ["indie"] },
-    { label: "festivall", aliases: ["festivall"] },
-] as const;
 function getCategoryIcon(name: string) {
     const key = name.trim().toLowerCase();
     return `/images/categories/${CATEGORY_ICONS[key] || "category (1).png"}`;
-}
-function getCanonicalGenreName(name: string): string | null {
-    const key = name.trim().toLowerCase();
-    if (["pop"].includes(key)) return "POP";
-    if (["rock"].includes(key)) return "ROCK";
-    if (["hip-hop", "hip hop", "hiphop"].includes(key)) return "HIP-HOP";
-    if (["edm"].includes(key)) return "EDM";
-    if (["kpop", "k-pop", "k pop"].includes(key)) return "KPOP";
-    if (["indie"].includes(key)) return "INDIE";
-    if (["festivall", "festival"].includes(key)) return "festivall";
-    return null;
 }
 const STATUS: Record<StatusKey, {
     text: string;
@@ -54,6 +34,8 @@ const STATUS: Record<StatusKey, {
     soldOut: { text: "Sold Out", style: "bg-[#3A202B] text-[#FF8298]" },
     ended: { text: "Ended", style: "bg-[#252A3A] text-[#AAB2C5]" },
     salesClosed: { text: "Sales Closed", style: "bg-[#252A3A] text-[#AAB2C5]" },
+    ongoing: { text: "LIVE NOW", style: "bg-[#152B32] text-[#26ADA0]" },
+    completed: { text: "Completed", style: "bg-[#252A3A] text-[#AAB2C5]" },
     new: { text: "New", style: "bg-[#2F1E2A] text-[#FF6B81]" },
 };
 const HERO_STATUS_LABEL: Record<string, string> = {
@@ -112,10 +94,8 @@ const styles = {
     statusBadge: "absolute left-3 top-3 rounded-md px-2.5 py-1 text-[11px] font-extrabold sm:px-3 sm:py-1.5 sm:text-xs",
     cityPicker: {
         label: "relative inline-flex max-w-full items-center",
-        pin: "pointer-events-none absolute left-3 h-4 w-4 object-contain",
-        select: "min-h-[40px] max-w-full cursor-pointer appearance-none rounded-full bg-[#6B6F8F] py-2 pl-9 pr-10 text-sm font-bold text-white outline-none focus-visible:ring-2 focus-visible:ring-[#22D3EE]",
-        option: "bg-[#161624] text-white",
-        arrow: "pointer-events-none absolute right-4 h-2 w-2 -translate-y-0.5 rotate-45 border-b-2 border-r-2 border-white/70",
+        pin: "pointer-events-none h-4 w-4 shrink-0 object-contain",
+        trigger: "inline-flex min-h-[42px] max-w-full items-center gap-2.5 rounded-xl border border-[#8B5CF6]/55 bg-[#1B2342] px-3.5 py-2 text-sm font-bold text-white shadow-[0_5px_16px_rgba(0,0,0,0.16)] transition hover:border-[#A78BFA] hover:bg-[#222B50] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#22D3EE]",
     },
     genre: {
         titleWrap: "mb-4 sm:mb-6",
@@ -244,7 +224,10 @@ function getPoster(path?: string | null) {
     return isLocalOrRemote ? path : imageUrl(path);
 }
 function getConcertStatus(concert: Concert): StatusKey {
-    // Read as string so this page remains compatible with older Concert type declarations.
+    const lifecycle = String(concert.lifecycle_status ?? "").toLowerCase();
+    if (lifecycle === "ongoing") return "ongoing";
+    if (lifecycle === "completed") return "completed";
+
     const salesStatus = String(concert.sales_status ?? "").toLowerCase();
 
     switch (salesStatus) {
@@ -413,28 +396,107 @@ function StatusBadge({ status }: {
     const { text, style } = STATUS[status];
     return <span className={cx(styles.statusBadge, style)}>{text}</span>;
 }
-function CityPicker({ value, onChange, }: {
+function CityPicker({
+    value,
+    onChange,
+}: {
     value: string;
     onChange: (city: string) => void;
 }) {
     const s = styles.cityPicker;
-    return (<label className={s.label}>
+    const [open, setOpen] = useState(false);
+    const rootRef = useRef<HTMLDivElement>(null);
 
-      <img src="/icons/pin.png" alt="" className={s.pin}/>
+    useEffect(() => {
+        if (!open) return;
 
-      <select value={value} onChange={(event) => onChange(event.target.value)} aria-label="Choose city" className={s.select}>
+        const handlePointerDown = (event: MouseEvent) => {
+            if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+                setOpen(false);
+            }
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setOpen(false);
+        };
 
-        {LOCATIONS.map((location) => (<option key={location} value={location} className={s.option}>
+        document.addEventListener("mousedown", handlePointerDown);
+        document.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("mousedown", handlePointerDown);
+            document.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [open]);
 
-            {location}
+    return (
+        <div ref={rootRef} className="relative inline-flex max-w-full">
+            <button
+                type="button"
+                aria-label="Choose city"
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                onClick={() => setOpen((current) => !current)}
+                className={s.trigger}
+            >
+                <img src="/icons/pin.png" alt="" className={s.pin} />
+                <span className="max-w-[180px] truncate">{value}</span>
+                <svg
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                    className={cx(
+                        "h-4 w-4 shrink-0 text-white/75 transition-transform duration-200",
+                        open && "rotate-180",
+                    )}
+                    fill="none"
+                >
+                    <path
+                        d="m5 7.5 5 5 5-5"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+                </svg>
+            </button>
 
-          </option>))}
+            {open && (
+                <div
+                    role="listbox"
+                    aria-label="Choose city"
+                    className="absolute left-0 top-[calc(100%+8px)] z-[80] max-h-72 min-w-[220px] overflow-y-auto rounded-2xl border border-white/10 bg-[#171B31] p-2 shadow-[0_18px_45px_rgba(0,0,0,0.48)]"
+                >
+                    {LOCATIONS.map((location) => {
+                        const active = location === value;
 
-      </select>
-
-      <span aria-hidden="true" className={s.arrow}/>
-
-    </label>);
+                        return (
+                            <button
+                                key={location}
+                                type="button"
+                                role="option"
+                                aria-selected={active}
+                                onClick={() => {
+                                    onChange(location);
+                                    setOpen(false);
+                                }}
+                                className={cx(
+                                    "flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-4 py-2.5 text-left text-sm font-bold transition",
+                                    active
+                                        ? "bg-[#302D68] text-white"
+                                        : "text-[#D1D5E0] hover:bg-white/[0.06] hover:text-white",
+                                )}
+                            >
+                                <span>{location}</span>
+                                {active && (
+                                    <span className="text-lg font-black leading-none text-[#22D3EE]">
+                                        ✓
+                                    </span>
+                                )}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
 }
 // 6. GENRE FILTER (dynamic from active categories API, horizontal scrolling)
 type HomeCategory = {
@@ -453,8 +515,8 @@ function GenreSection({ selectedGenre, onSelect, concerts, categories, }: {
         { id: "all", name: "All" },
         ...categories.map((category) => ({
             id: String(category.id),
-            name: getCanonicalGenreName(category.name),
-        })).filter((category): category is { id: string; name: string } => Boolean(category.name)),
+            name: category.name.trim(),
+        })).filter((category) => Boolean(category.name)),
     ];
     return (<section className={styles.section}>
       <div className={s.titleWrap}>
@@ -694,8 +756,12 @@ function HeroBanner({ concerts, wishlistIds, onWishlistClick, }: {
     const isWishlisted = activeConcert
         ? wishlistIds.includes(String(activeConcert.id))
         : false;
-    const statusLabel = (activeConcert?.sales_status && HERO_STATUS_LABEL[activeConcert.sales_status]) ||
-        HERO_STATUS_FALLBACK;
+    const statusLabel = activeConcert?.lifecycle_status === "ongoing"
+        ? "LIVE NOW"
+        : activeConcert?.lifecycle_status === "completed"
+            ? "COMPLETED"
+            : (activeConcert?.sales_status && HERO_STATUS_LABEL[activeConcert.sales_status]) ||
+                HERO_STATUS_FALLBACK;
     return (<section aria-label="Featured concerts carousel" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} className={s.root}>
 
       {/* Background */}
@@ -856,14 +922,14 @@ export default function CustomerHomePage() {
                     : [];
                 const seen = new Set<string>();
                 const normalized = rows.reduce<HomeCategory[]>((result, category) => {
-                    const canonicalName = getCanonicalGenreName(category.name || "");
-                    if (!canonicalName || seen.has(canonicalName)) return result;
-                    seen.add(canonicalName);
-                    result.push({ ...category, name: canonicalName });
+                    const name = String(category.name || "").trim();
+                    const key = name.toLocaleLowerCase();
+                    if (!name || seen.has(key)) return result;
+                    seen.add(key);
+                    result.push({ ...category, name });
                     return result;
                 }, []);
-                const order = ["POP", "ROCK", "HIP-HOP", "EDM", "KPOP", "INDIE", "festivall"];
-                normalized.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+                normalized.sort((a, b) => a.name.localeCompare(b.name));
                 if (active) setCategories(normalized);
             } catch (error) {
                 console.error("Failed to load categories:", error);

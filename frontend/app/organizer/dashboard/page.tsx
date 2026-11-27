@@ -779,14 +779,14 @@ export default function OrganizerDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
-  const [name, setName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem("user");
-      setName(stored ? JSON.parse(stored)?.name || "" : "");
+      setOrganizationName(stored ? JSON.parse(stored)?.name || "" : "");
     } catch {
-      setName("");
+      setOrganizationName("");
     }
   }, []);
 
@@ -861,7 +861,8 @@ export default function OrganizerDashboardPage() {
       {/* WELCOME */}
       <OrganizerPageHero
         eyebrow="LYNORA ORGANIZER WORKSPACE"
-        title={`Welcome back, ${name || "Organizer"}`}
+        title="Welcome back,"
+        highlight={`${organizationName || "Organization"}! 👋`}
         description="Manage your concerts, monitor ticket sales, and keep track of your event performance in one place."
         className="mb-0"
       >

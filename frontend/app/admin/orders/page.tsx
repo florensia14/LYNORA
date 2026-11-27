@@ -40,7 +40,7 @@ type Detail = {
 };
 
 const ICON = {
-  orders: "/icons/orders.png",
+  orders: "/icons/orders (1).png",
   money: "/icons/dollar.png",
   success: "/icons/check (1).png",
   failed: "/icons/close.png",

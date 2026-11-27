@@ -204,7 +204,8 @@ function OrganizerOrdersContent() {
     <main className="min-h-screen w-full min-w-0 space-y-5 overflow-x-hidden pb-10 text-white sm:space-y-6">
       <OrganizerPageHero
         eyebrow="ORDER MANAGEMENT"
-        title="Orders"
+        title="Manage"
+        highlight="Orders"
         description="Keep track of customer purchases, payment progress, and ticket transactions across your concerts."
       >
         <button

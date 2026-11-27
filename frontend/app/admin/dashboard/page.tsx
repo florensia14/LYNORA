@@ -932,7 +932,7 @@ function AdminDashboardContent() {
         <StatCard
           label="Total Concerts"
           value={formatNumber(stats.total_concerts)}
-          icon="/icons/calender (1).png"
+          icon="/icons/calendar (1).png"
           note={
             <span className="text-[10px] text-slate-400">
               <b className="text-[#FBBF24]">{stats.pending_concerts}</b> awaiting

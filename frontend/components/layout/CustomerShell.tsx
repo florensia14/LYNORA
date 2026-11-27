@@ -264,9 +264,14 @@ export default function CustomerShell({
     }
 
     loadNotifications();
+    const poll = window.setInterval(loadNotifications, 15000);
+    const refresh = () => loadNotifications();
+    window.addEventListener("focus", refresh);
 
     return () => {
       active = false;
+      window.clearInterval(poll);
+      window.removeEventListener("focus", refresh);
     };
   }, []);
 

@@ -1,12 +1,14 @@
 const db = require("../config/database");
 
 async function createNotification({ userId, eventId = null, title, message, type = "announcement" }) {
-  if (!userId || !title || !message) return;
-  await db.execute(
+  const id = Number(userId);
+  if (!Number.isSafeInteger(id) || id <= 0 || !title || !message) return null;
+  const [result] = await db.execute(
     `INSERT INTO notifications (user_id, event_id, title, message, type)
      VALUES (?, ?, ?, ?, ?)`,
-    [Number(userId), eventId ? Number(eventId) : null, String(title), String(message), type]
+    [id, eventId ? Number(eventId) : null, String(title), String(message), String(type)]
   );
+  return result.insertId;
 }
 
 async function notifyRole(role, payload) {
@@ -14,9 +16,8 @@ async function notifyRole(role, payload) {
     "SELECT id FROM users WHERE role = ? AND is_active = 1",
     [role]
   );
-  for (const user of users) {
-    await createNotification({ ...payload, userId: user.id });
-  }
+  for (const user of users) await createNotification({ ...payload, userId: user.id });
+  return users.length;
 }
 
 module.exports = { createNotification, notifyRole };

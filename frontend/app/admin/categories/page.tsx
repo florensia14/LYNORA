@@ -25,7 +25,7 @@ const ICONS = {
     search: "/icons/search.png",
     view: "/icons/eye (1).png",
     edit: "/icons/edit.png",
-    delete: "/images/categories/bin.png",
+    delete: "/icons/bin.png",
 };
 type Category = {
     id: number;
@@ -56,9 +56,6 @@ function PngIcon({ src, size = 16 }: {
 function getCategoryDefinition(name: string) {
     const key = name.trim().toLowerCase();
     return CATEGORY_DEFINITIONS.find((item) => (item.aliases as readonly string[]).includes(key));
-}
-function getCanonicalCategoryName(name: string) {
-    return getCategoryDefinition(name)?.name || null;
 }
 function getCategoryIcon(category: Category | string) {
     const name = typeof category === "string" ? category : category.name;
@@ -460,19 +457,10 @@ export default function ManageCategoriesPage() {
             const payload = await apiRequest<{
                 categories?: Category[];
             }>("/categories/admin");
-            const seenCategoryNames = new Set<string>();
-            const supportedCategories = (payload.categories || []).reduce<Category[]>((result, category) => {
-                const canonicalName = getCanonicalCategoryName(category.name);
-                if (!canonicalName || seenCategoryNames.has(canonicalName)) return result;
-                seenCategoryNames.add(canonicalName);
-                result.push({ ...category, name: canonicalName });
-                return result;
-            }, []).sort((a, b) => {
-                const aIndex = CATEGORY_DEFINITIONS.findIndex((item) => item.name === a.name);
-                const bIndex = CATEGORY_DEFINITIONS.findIndex((item) => item.name === b.name);
-                return aIndex - bIndex;
-            });
-            setCategories(supportedCategories);
+            const databaseCategories = (payload.categories || [])
+                .filter((category) => Number.isFinite(Number(category.id)) && Boolean(category.name?.trim()))
+                .sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+            setCategories(databaseCategories);
         }
         catch (err) {
             setError(err instanceof Error ? err.message : "Failed to load categories.");
@@ -526,16 +514,11 @@ export default function ManageCategoriesPage() {
             setFormError("Category name is required.");
             return;
         }
-        const canonicalName = getCanonicalCategoryName(form.name);
-        if (!canonicalName) {
-            setFormError("Use one of the supported LYNORA categories: POP, ROCK, HIP-HOP, EDM, KPOP, INDIE, or festivall.");
-            return;
-        }
         setSaving(true);
         setFormError("");
         try {
             const payload = {
-                name: canonicalName,
+                name: form.name.trim(),
                 description: form.description.trim(),
                 status: form.status,
             };

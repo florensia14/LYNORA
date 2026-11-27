@@ -17,6 +17,15 @@ async function getWishlist(req, res) {
         e.start_date,
         e.end_date,
         e.status,
+        e.approval_status,
+        e.publication_status,
+        e.sales_start_at,
+        e.sales_end_at,
+        CASE
+          WHEN NOW() >= e.end_date THEN 'completed'
+          WHEN NOW() >= e.start_date THEN 'ongoing'
+          ELSE 'upcoming'
+        END AS lifecycle_status,
 
         c.id AS category_id,
         c.name AS category_name,
@@ -43,7 +52,9 @@ async function getWishlist(req, res) {
         ON v.id = e.venue_id
 
       WHERE w.user_id = ?
-        AND e.status = 'published'
+        AND e.approval_status = 'approved'
+        AND e.publication_status = 'published'
+        AND e.deleted_at IS NULL
 
       ORDER BY w.created_at DESC`,
       [userId]

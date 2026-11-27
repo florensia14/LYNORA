@@ -1,7 +1,8 @@
 // @ts-nocheck
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
@@ -499,20 +500,19 @@ const GridIcon = (p) => <Icon src={ICON.category} {...p} />;
 /* SMALL COMPONENTS                                                    */
 /* ------------------------------------------------------------------ */
 
-function StatCard({ icon, label, value, tone }) {
+function StatCard({ icon, label, value, tone, note }) {
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.07] bg-[#161C38] px-3 py-3 sm:px-4">
-      <span
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone}`}
-      >
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <p className="truncate text-[11px] text-slate-400">{label}</p>
-        <p className="truncate text-xl font-bold leading-tight text-white sm:text-2xl">
-          {value}
-        </p>
+    <div className="min-w-0 rounded-xl border border-white/[0.07] bg-[#161C38] p-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${tone}`}>
+          {icon}
+        </span>
+        <p className="truncate text-[11px] font-medium text-slate-400">{label}</p>
       </div>
+      <p className="mt-2 truncate text-xl font-bold leading-none text-white sm:text-2xl">
+        {value}
+      </p>
+      <div className="mt-2 truncate">{note}</div>
     </div>
   );
 }
@@ -536,32 +536,75 @@ function FilterSelect({ icon, value, onChange, children, label }) {
 
 function RowMenu({ concert, onDelete, onToggleDraft, busy }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
+
   const canTogglePublication = concert.approvalStatus === "approved";
   const isDraft = concert.publicationStatus !== "published";
 
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        aria-label="More actions"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-8 w-6 items-center justify-center rounded-md text-white transition hover:bg-white/[0.08]"
-      >
-        <Icon src={ICON.more} className="h-5 w-5" />
-      </button>
+  useEffect(() => {
+    if (!open) return;
 
-      {open && (
+    const updatePosition = () => {
+      const button = buttonRef.current;
+      if (!button) return;
+
+      const rect = button.getBoundingClientRect();
+      const menuWidth = 176;
+      const menuHeight = canTogglePublication ? 176 : 136;
+      const gap = 8;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const top = spaceBelow >= menuHeight + gap
+        ? rect.bottom + gap
+        : Math.max(8, rect.top - menuHeight - gap);
+      const left = Math.max(
+        8,
+        Math.min(window.innerWidth - menuWidth - 8, rect.right - menuWidth)
+      );
+
+      setPosition({ top, left });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, canTogglePublication]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
+
+  const menu = open && typeof document !== "undefined"
+    ? createPortal(
         <>
           <button
             type="button"
             aria-label="Close menu"
-            className="fixed inset-0 z-40 cursor-default"
+            className="fixed inset-0 z-[9998] cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 top-9 z-50 w-40 overflow-hidden rounded-xl border border-white/10 bg-[#17213C] p-1.5 shadow-2xl">
+          <div
+            ref={menuRef}
+            role="menu"
+            className="fixed z-[9999] w-44 rounded-xl border border-white/10 bg-[#17213C] p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.55)]"
+            style={{ top: position.top, left: position.left }}
+          >
             <Link
               href={`/organizer/manage-tickets?concert=${concert.id}`}
+              role="menuitem"
               onClick={() => setOpen(false)}
               className="block rounded-lg px-3 py-2 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white"
             >
@@ -569,6 +612,7 @@ function RowMenu({ concert, onDelete, onToggleDraft, busy }) {
             </Link>
             <Link
               href={`/organizer/orders?concert=${concert.id}`}
+              role="menuitem"
               onClick={() => setOpen(false)}
               className="block rounded-lg px-3 py-2 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white"
             >
@@ -577,6 +621,7 @@ function RowMenu({ concert, onDelete, onToggleDraft, busy }) {
             {canTogglePublication && (
               <button
                 type="button"
+                role="menuitem"
                 disabled={busy}
                 onClick={() => {
                   setOpen(false);
@@ -584,11 +629,12 @@ function RowMenu({ concert, onDelete, onToggleDraft, busy }) {
                 }}
                 className="w-full rounded-lg px-3 py-2 text-left text-xs text-amber-300 transition hover:bg-amber-500/10 disabled:opacity-50"
               >
-                {busy ? "Please wait..." : isDraft ? "Out Draft" : "Draft"}
+                {busy ? "Please wait..." : isDraft ? "Publish" : "Move to Draft"}
               </button>
             )}
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 setOpen(false);
                 onDelete(concert);
@@ -598,8 +644,24 @@ function RowMenu({ concert, onDelete, onToggleDraft, busy }) {
               Delete Concert
             </button>
           </div>
-        </>
-      )}
+        </>,
+        document.body
+      )
+    : null;
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label="More actions"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-8 w-6 items-center justify-center rounded-md text-white transition hover:bg-white/[0.08]"
+      >
+        <Icon src={ICON.more} className="h-5 w-5" />
+      </button>
+      {menu}
     </div>
   );
 }
@@ -854,14 +916,8 @@ function ManageConcertContent() {
       {/* SHARED ORGANIZER HERO */}
       <OrganizerPageHero
         eyebrow="ORGANIZER MANAGEMENT"
-        title={
-          <>
-            Manage{" "}
-            <span className="bg-[linear-gradient(90deg,#A78BFA,#22D3EE)] bg-clip-text text-transparent">
-              Concerts
-            </span>
-          </>
-        }
+        title="Manage"
+        highlight="Concerts"
         description="View, edit, and manage all your concerts in one place."
         className="mb-0"
       >
@@ -881,34 +937,37 @@ function ManageConcertContent() {
           label="Total Concerts"
           value={stats.total}
           tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
-          icon={<ClipboardIcon />}
+          icon={<ClipboardIcon className="h-4 w-4" />}
+          note={<span className="text-[10px] text-slate-400">All your concerts</span>}
         />
         <StatCard
           label="Ongoing"
           value={stats.ongoing}
           tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
-          icon={<ClockIcon />}
+          icon={<ClockIcon className="h-4 w-4" />}
+          note={<span className="text-[10px] text-slate-400">Published &amp; not yet finished</span>}
         />
         <StatCard
           label="Published"
           value={stats.published}
           tone="bg-[#10B981]/25 text-[#34D399]"
-          icon={<CheckIcon />}
+          icon={<CheckIcon className="h-4 w-4" />}
+          note={<span className="text-[10px] text-slate-400">Concerts published to customers</span>}
         />
         <StatCard
           label="Draft"
           value={stats.draft}
           tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
-          icon={<DraftIcon />}
+          icon={<DraftIcon className="h-4 w-4" />}
+          note={<span className="text-[10px] text-slate-400">Unpublished concerts</span>}
         />
-        <div className="col-span-2 sm:col-span-1">
-          <StatCard
-            label="Total Revenue"
-            value={formatRupiah(stats.revenue)}
-            tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
-            icon={<ChartIcon />}
-          />
-        </div>
+        <StatCard
+          label="Gross Revenue"
+          value={formatRupiah(stats.revenue)}
+          tone="bg-[#7C3AED]/30 text-[#C4B5FD]"
+          icon={<ChartIcon className="h-4 w-4" />}
+          note={<span className="text-[10px] text-slate-400">Gross revenue from all concerts</span>}
+        />
       </section>
 
       {/* FILTERS */}

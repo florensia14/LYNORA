@@ -130,6 +130,19 @@ function isConcertEnded(concert: ConcertDetail) {
 
 }
 
+function getConcertLifecycleLabel(concert: ConcertDetail) {
+  const lifecycle = String((concert as ConcertDetail & { lifecycle_status?: string }).lifecycle_status || "").toLowerCase();
+  if (lifecycle === "ongoing") return "LIVE NOW";
+  if (lifecycle === "completed") return "COMPLETED";
+
+  const now = Date.now();
+  const start = new Date(concert.start_date).getTime();
+  const end = new Date(concert.end_date || concert.start_date).getTime();
+  if (!Number.isNaN(end) && now >= end) return "COMPLETED";
+  if (!Number.isNaN(start) && now >= start) return "LIVE NOW";
+  return "UPCOMING";
+}
+
 function dateTime(value?: string) {
 
   if (!value) return "Date to be announced";
@@ -558,7 +571,7 @@ export default function EventDetailPage() {
 
                 <span className="rounded-full bg-[#C30437] px-3.5 py-1.5 text-[10px] font-black tracking-wide text-white sm:px-4 sm:text-xs">
 
-                  LIVE EVENT
+                  {getConcertLifecycleLabel(concert)}
 
                 </span>
 
@@ -572,15 +585,7 @@ export default function EventDetailPage() {
 
                 )}
 
-                {concert.status && (
 
-                  <span className="rounded-full border border-[#26ADA0]/40 bg-[#152B32]/90 px-3.5 py-1.5 text-[10px] font-extrabold text-[#5DE0D0]">
-
-                    {concert.status}
-
-                  </span>
-
-                )}
 
               </div>
 
@@ -878,13 +883,13 @@ export default function EventDetailPage() {
 
                     <p className="text-xs font-black uppercase tracking-wider text-violet-300">
 
-                      {salesStatus === "coming_soon" ? "Coming Soon" : salesStatus === "sold_out" ? "Sold Out" : salesStatus === "ended" || eventEnded ? "Ended" : "Ticket Sales Unavailable"}
+                      {salesStatus === "coming_soon" ? "Coming Soon" : salesStatus === "sold_out" ? "Sold Out" : salesStatus === "ended" || eventEnded ? "Ended" : salesStatus === "sales_closed" ? "Sales Closed" : "Ticket Sales Unavailable"}
 
                     </p>
 
                     <h2 className="mt-2 text-lg font-black text-white">
 
-                      {salesStatus === "coming_soon" ? "Ticket Sales Have Not Started" : salesStatus === "sold_out" ? "All Tickets Are Sold Out" : salesStatus === "ended" || eventEnded ? "This Concert Has Ended" : "Ticket Sales Are Currently Unavailable"}
+                      {salesStatus === "coming_soon" ? "Ticket Sales Have Not Started" : salesStatus === "sold_out" ? "All Tickets Are Sold Out" : salesStatus === "ended" || eventEnded ? "This Concert Has Ended" : salesStatus === "sales_closed" ? "Ticket Sales Have Closed" : "Ticket Sales Are Currently Unavailable"}
 
                     </h2>
 

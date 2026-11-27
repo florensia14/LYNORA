@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -17,7 +17,7 @@ type ApiNotification = {
   id: number;
   title: string;
   message: string;
-  type: "announcement" | "payment" | "ticket" | "schedule" | "cancellation";
+  type: string;
   is_read: number | boolean;
   created_at: string;
 };
@@ -140,29 +140,75 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     setShowNotificationsPanel(false);
     setShowProfileMenu(false);
   }, [pathname]);
-  useEffect(() => {
-    let cancelled = false;
-    async function loadNotifications() {
-      setNotificationsLoading(true);
-      try {
-        const res = await fetch(`${API_ORIGIN}/api/notifications`, {
-          headers: authHeaders(),
-        });
-        if (!res.ok) throw new Error("Failed to load notifications");
-        const data = await res.json();
-        const list: ApiNotification[] = data.notifications ?? [];
-        if (!cancelled) setNotifications(list.map(toNotificationItem));
-      } catch {
-        if (!cancelled) setNotifications([]);
-      } finally {
-        if (!cancelled) setNotificationsLoading(false);
+  const loadNotifications = useCallback(async (showLoader = false) => {
+    if (showLoader) setNotificationsLoading(true);
+
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setNotifications([]);
+        return;
       }
+
+      const res = await fetch(`${API_ORIGIN}/api/notifications`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => "");
+        throw new Error(
+          `Failed to load notifications (${res.status}): ${errorText}`
+        );
+      }
+
+      const data = await res.json();
+      const list: ApiNotification[] = Array.isArray(data.notifications)
+        ? data.notifications
+        : [];
+
+      setNotifications(list.map(toNotificationItem));
+    } catch (error) {
+      console.error("[Admin notifications] Failed to load:", error);
+    } finally {
+      if (showLoader) setNotificationsLoading(false);
     }
-    loadNotifications();
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  // Load immediately, refresh every 15 seconds, and refresh when the tab
+  // becomes visible again so new notifications appear without re-login.
+  useEffect(() => {
+    void loadNotifications(true);
+
+    const intervalId = window.setInterval(() => {
+      void loadNotifications(false);
+    }, 15000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadNotifications(false);
+      }
+    };
+
+    window.addEventListener("focus", handleVisibilityChange);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleVisibilityChange);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadNotifications]);
+  useEffect(() => {
+    if (showNotificationsPanel) {
+      void loadNotifications(false);
+    }
+  }, [showNotificationsPanel, loadNotifications]);
+
   const profilePhoto = getProfilePhoto(user);
   const unreadCount = useMemo(
     () => notifications.filter((item) => !item.read).length,

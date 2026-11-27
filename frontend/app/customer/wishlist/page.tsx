@@ -11,7 +11,7 @@ import { fetchConcerts } from "@/lib/api";
 /* -------------------------------------------------------------------------- */
 
 type WishlistTab = "all" | "upcoming" | "past";
-type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "new";
+type StatusKey = "comingSoon" | "onSale" | "soldOut" | "ended" | "salesClosed" | "ongoing" | "completed" | "new";
 
 type WishlistEvent = Omit<
   Concert,
@@ -48,15 +48,27 @@ const TABS: { value: WishlistTab; label: string }[] = [
   { value: "past", label: "Past Events" },
 ];
 
-const CATEGORIES = [
-  { label: "All Category", value: "all", icon: "category (1).png" },
-  { label: "Pop", value: "Pop", icon: "guitar.png" },
-  { label: "Rock", value: "Rock", icon: "hand.png" },
-  { label: "Hip-Hop", value: "Hip-Hop", icon: "boombox.png" },
-  { label: "EDM", value: "EDM", icon: "technology.png" },
-  { label: "Indie", value: "Indie", icon: "wave-sound.png" },
-  { label: "K-Pop", value: "K-Pop", icon: "disco-ball.png" },
-];
+type CategoryOption = { label: string; value: string; icon: string };
+
+const DEFAULT_CATEGORY: CategoryOption = {
+  label: "All Category",
+  value: "all",
+  icon: "category (1).png",
+};
+
+function categoryIconFor(name: string) {
+  const key = name.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const icons: Record<string, string> = {
+    pop: "guitar.png",
+    rock: "hand.png",
+    hiphop: "boombox.png",
+    edm: "technology.png",
+    indie: "wave-sound.png",
+    kpop: "disco-ball.png",
+    festival: "festival.png",
+  };
+  return icons[key] || "category (1).png";
+}
 
 const GRID =
   "grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3";
@@ -67,6 +79,8 @@ const STATUS: Record<StatusKey, { text: string; style: string }> = {
   soldOut: { text: "Sold Out", style: "bg-[#3A202B] text-[#FF8298]" },
   ended: { text: "Ended", style: "bg-[#252A3A] text-[#AAB2C5]" },
   salesClosed: { text: "Sales Closed", style: "bg-[#252A3A] text-[#AAB2C5]" },
+  ongoing: { text: "LIVE NOW", style: "bg-[#152B32] text-[#26ADA0]" },
+  completed: { text: "Completed", style: "bg-[#252A3A] text-[#AAB2C5]" },
   new: { text: "New", style: "bg-[#2F1E2A] text-[#FF6B81]" },
 };
 
@@ -140,13 +154,17 @@ function getDescription(concert: WishlistEvent) {
 }
 
 function getStatus(concert: WishlistEvent): StatusKey {
+  const lifecycle = String((concert as WishlistEvent & { lifecycle_status?: string }).lifecycle_status || "").toLowerCase();
+  if (lifecycle === "ongoing") return "ongoing";
+  if (lifecycle === "completed") return "completed";
+
   const salesStatus = String(concert.sales_status || "").toLowerCase();
 
   if (salesStatus === "ended") return "ended";
   if (salesStatus === "sold_out") return "soldOut";
   if (salesStatus === "on_sale") return "onSale";
   if (salesStatus === "coming_soon") return "comingSoon";
-  if (salesStatus === "not_available") return "salesClosed";
+  if (salesStatus === "not_available" || salesStatus === "sales_closed") return "salesClosed";
 
   const rawStatus = String(concert.status || "").toLowerCase();
   if (rawStatus === "new") return "new";
@@ -324,12 +342,15 @@ function WishlistHero({
 function CategoryDropdown({
   category,
   onChange,
+  categories,
 }: {
   category: string;
   onChange: (value: string) => void;
+  categories: CategoryOption[];
 }) {
   const [open, setOpen] = useState(false);
-  const selected = CATEGORIES.find((item) => item.value === category) ?? CATEGORIES[0];
+  const options = [DEFAULT_CATEGORY, ...categories];
+  const selected = options.find((item) => item.value === category) ?? DEFAULT_CATEGORY;
 
   return (
     <div className="relative">
@@ -357,7 +378,7 @@ function CategoryDropdown({
             className="fixed inset-0 z-30 cursor-default"
           />
           <div className="absolute right-0 top-full z-40 mt-2 w-48 overflow-hidden rounded-xl border border-white/10 bg-[#151B30] p-1.5 shadow-2xl shadow-black/50">
-            {CATEGORIES.map((item) => {
+            {options.map((item) => {
               const active = item.value === category;
               return (
                 <button
@@ -567,6 +588,7 @@ export default function WishlistPage() {
   const [tab, setTab] = useState<WishlistTab>("all");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [removingId, setRemovingId] = useState<number | null>(null);
   const [removingAll, setRemovingAll] = useState(false);
   const [toast, setToast] = useState("");
@@ -696,6 +718,35 @@ export default function WishlistPage() {
     void loadWishlist();
   }, [loadWishlist]);
 
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_BASE_URL}/categories/public`, { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.message || "Failed to load categories.");
+        return Array.isArray(payload?.categories) ? payload.categories : [];
+      })
+      .then((rows) => {
+        if (!active) return;
+        const seen = new Set<string>();
+        const options = rows
+          .filter((row: any) => row?.name)
+          .map((row: any) => {
+            const name = String(row.name).trim();
+            return { label: name, value: name, icon: categoryIconFor(name) };
+          })
+          .filter((item: CategoryOption) => {
+            const key = normalizeCategory(item.value);
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        setCategories(options);
+      })
+      .catch((error) => console.error("Failed to load wishlist categories:", error));
+    return () => { active = false; };
+  }, []);
+
   const removeItem = async (eventId: number) => {
     const token = localStorage.getItem("token");
     if (!token || removingId !== null) return;
@@ -820,7 +871,7 @@ export default function WishlistPage() {
           </div>
 
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-            <CategoryDropdown category={category} onChange={setCategory} />
+            <CategoryDropdown category={category} onChange={setCategory} categories={categories} />
             {items.length > 0 && (
               <button
                 type="button"

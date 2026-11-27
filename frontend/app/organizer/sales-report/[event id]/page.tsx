@@ -585,7 +585,8 @@ export default function OrganizerSalesDetailPage() {
 
         <OrganizerPageHero
           eyebrow="ORGANIZER MANAGEMENT"
-          title="Sales Detail"
+          title="Sales"
+          highlight="Detail"
           description="Explore ticket sales, revenue, payment activity, and attendance for this concert."
         >
           <button

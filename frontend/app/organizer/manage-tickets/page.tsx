@@ -540,7 +540,8 @@ function ManageTicketsContent() {
 
         eyebrow="TICKET MANAGEMENT"
 
-        title="Manage Tickets"
+        title="Manage"
+        highlight="Tickets"
 
         description="Manage ticket categories, pricing, quotas, and benefits for each concert."
 

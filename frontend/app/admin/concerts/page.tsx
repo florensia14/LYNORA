@@ -4,9 +4,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminPageHero from "@/components/layout/AdminPageHero";
 
-const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "").replace(/\/$/, "");
-const API_URL = `${API_ORIGIN}/api`;
-
 type Concert = {
   id: number;
   name: string;
@@ -25,145 +22,154 @@ type Concert = {
   display_status: string;
 };
 
-type Stats = {
+type ConcertResponse = {
+  success: boolean;
+  message?: string;
   total: number;
-  ongoing: number;
-  published: number;
-  draft: number;
-  cancelled: number;
+  stats: {
+    total: number;
+    ongoing: number;
+    published: number;
+    draft: number;
+    cancelled: number;
+  };
+  concerts: Concert[];
 };
 
-const emptyStats: Stats = {
-  total: 0,
-  ongoing: 0,
-  published: 0,
-  draft: 0,
-  cancelled: 0,
-};
+const API_ORIGIN = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api"
+)
+  .replace(/\/api\/?$/, "")
+  .replace(/\/$/, "");
 
-const ICONS = {
-  clipboard: "/icons/clipboard (1).png",
-  notification: "/icons/notification (3).png",
-  check: "/icons/check (1).png",
-  draft: "/icons/draft.png",
-  close: "/icons/close.png",
-  calendar: "/icons/calendar (1).png",
-  location: "/icons/location (1).png",
-  category: "/icons/category.png",
-  eye: "/icons/eye (1).png",
-};
+const API_URL = `${API_ORIGIN}/api`;
 
-function PngIcon({ name, size = 18 }: { name: keyof typeof ICONS; size?: number }) {
-  return (
-    <img
-      src={ICONS[name]}
-      alt=""
-      aria-hidden="true"
-      width={size}
-      height={size}
-      className="shrink-0 object-contain"
-    />
-  );
+const FILTERS = [
+  "All Status",
+  "Published",
+  "Ongoing",
+  "Draft",
+  "Pending",
+  "Rejected",
+  "Completed",
+  "Cancelled",
+];
+
+function formatNumber(value: number) {
+  return Number(value || 0).toLocaleString("id-ID");
 }
 
-function authHeaders(): Record<string, string> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-function imageUrl(value: string | null) {
-  if (!value) return "/images/hero/ao.jpg";
-  if (/^(https?:|data:)/i.test(value)) return value;
-  return `${API_ORIGIN}${value.startsWith("/") ? "" : "/"}${value}`;
+function formatRupiah(value: number) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
 }
 
 function formatDate(value: string) {
   if (!value) return "-";
-  return new Date(value).toLocaleDateString("en-GB", {
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return date.toLocaleDateString("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
 }
 
-function money(value: number) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(value || 0);
-}
+function imageUrl(value: string | null) {
+  if (!value) return "";
 
-function statusLabel(item: Concert) {
-  if (item.approval_status === "pending") return "Pending";
-  if (item.approval_status === "rejected") return "Rejected";
-  if (item.display_status === "Ongoing") return "Ongoing";
-  if (item.display_status === "Completed") return "Completed";
-  if (item.publication_status === "published") return "Published";
-
-  if (
-    item.publication_status === "unpublished" ||
-    item.publication_status === "draft"
-  ) {
-    return "Draft";
+  if (/^(https?:)?\/\//i.test(value) || value.startsWith("data:")) {
+    return value;
   }
 
-  return item.display_status || "Approved";
+  return `${API_ORIGIN}${value.startsWith("/") ? "" : "/"}${value}`;
 }
 
-function Status({ value }: { value: string }) {
-  const style =
-    value === "Published" || value === "Ongoing"
-      ? "bg-[#0D3A36] text-[#35D5B2]"
-      : value === "Pending"
-        ? "bg-[#49391B] text-[#F4C44E]"
-        : value === "Rejected" || value === "Cancelled"
-          ? "bg-[#4A202D] text-[#FF8196]"
-          : value === "Completed"
-            ? "bg-[#27324A] text-[#B7C4DD]"
-            : "bg-[#30254F] text-[#C4B5FD]";
+function statusStyle(status: string) {
+  const styles: Record<string, string> = {
+    Published: "bg-emerald-500/15 text-emerald-400",
+    Ongoing: "bg-cyan-500/15 text-cyan-400",
+    Completed: "bg-slate-500/20 text-slate-300",
+    Draft: "bg-amber-500/15 text-amber-400",
+    Pending: "bg-yellow-500/15 text-yellow-400",
+    Rejected: "bg-rose-500/15 text-rose-400",
+    Cancelled: "bg-rose-500/15 text-rose-400",
+  };
 
-  return (
-    <span className={`inline-flex whitespace-nowrap rounded-full px-3 py-1 text-[10px] font-bold ${style}`}>
-      {value}
-    </span>
-  );
+  return styles[status] || "bg-slate-500/20 text-slate-300";
 }
 
-export default function ManageConcertsPage() {
+export default function AdminConcertsPage() {
   const [concerts, setConcerts] = useState<Concert[]>([]);
-  const [stats, setStats] = useState<Stats>(emptyStats);
+  const [stats, setStats] = useState({
+    total: 0,
+    ongoing: 0,
+    published: 0,
+    draft: 0,
+    cancelled: 0,
+  });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All Status");
-  const [organizerFilter, setOrganizerFilter] = useState("All Organizers");
-  const [categoryFilter, setCategoryFilter] = useState("All Categories");
-  const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<Concert | null>(null);
-
-  const pageSize = 7;
+  const [filter, setFilter] = useState("All Status");
 
   const loadConcerts = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      const response = await fetch(`${API_URL}/events/admin/concerts`, {
-        headers: authHeaders(),
-        cache: "no-store",
-      });
+      const token = localStorage.getItem("token");
 
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(payload.message || "Unable to load concerts.");
+      if (!token) {
+        throw new Error("Sesi login tidak ditemukan. Silakan login kembali.");
       }
 
-      setConcerts(payload.concerts || []);
-      setStats(payload.stats || emptyStats);
+      const response = await fetch(
+        `${API_URL}/events/admin/concerts`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+        },
+      );
+
+      const result: ConcertResponse = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.message || "Gagal mengambil daftar konser.",
+        );
+      }
+
+      setConcerts(
+        Array.isArray(result.concerts) ? result.concerts : [],
+      );
+
+      setStats(
+        result.stats || {
+          total: 0,
+          ongoing: 0,
+          published: 0,
+          draft: 0,
+          cancelled: 0,
+        },
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load concerts.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Terjadi kesalahan saat mengambil data konser.",
+      );
     } finally {
       setLoading(false);
     }
@@ -173,442 +179,246 @@ export default function ManageConcertsPage() {
     loadConcerts();
   }, [loadConcerts]);
 
-  const organizers = useMemo(
-    () => [...new Set(concerts.map((c) => c.organizer_name).filter(Boolean))].sort(),
-    [concerts]
-  );
+  const filteredConcerts = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
 
-  const categories = useMemo(
-    () => [...new Set(concerts.map((c) => c.category_name).filter(Boolean))].sort(),
-    [concerts]
-  );
+    return concerts.filter((concert) => {
+      const matchesSearch = [
+        concert.name,
+        concert.organizer_name,
+        concert.category_name,
+        concert.venue_name,
+      ].some((value) =>
+        String(value || "").toLowerCase().includes(keyword),
+      );
 
-  const filtered = useMemo(
-    () =>
-      concerts.filter((c) => {
-        const status = statusLabel(c);
-        const q = search.trim().toLowerCase();
+      const matchesStatus =
+        filter === "All Status" ||
+        concert.display_status === filter;
 
-        const matchesSearch =
-          !q ||
-          [c.name, c.organizer_name, c.venue_name, c.category_name, String(c.id)].some(
-            (v) => String(v || "").toLowerCase().includes(q)
-          );
-
-        return (
-          matchesSearch &&
-          (statusFilter === "All Status" || status === statusFilter) &&
-          (organizerFilter === "All Organizers" || c.organizer_name === organizerFilter) &&
-          (categoryFilter === "All Categories" || c.category_name === categoryFilter)
-        );
-      }),
-    [concerts, search, statusFilter, organizerFilter, categoryFilter]
-  );
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
-
-  useEffect(() => {
-    setPage(1);
-  }, [search, statusFilter, organizerFilter, categoryFilter]);
+      return matchesSearch && matchesStatus;
+    });
+  }, [concerts, search, filter]);
 
   const statCards = [
     {
       label: "Total Concerts",
       value: stats.total,
-      icon: "clipboard" as const,
-      glow: "bg-[#8B5CF6]/20",
+      icon: "/icons/clipboard (1).png",
     },
     {
       label: "Ongoing",
       value: stats.ongoing,
-      icon: "notification" as const,
-      glow: "bg-[#22D3EE]/15",
+      icon: "/icons/calendar (1).png",
     },
     {
       label: "Published",
       value: stats.published,
-      icon: "check" as const,
-      glow: "bg-[#35D5B2]/15",
+      icon: "/icons/check (1).png",
     },
     {
       label: "Draft",
       value: stats.draft,
-      icon: "draft" as const,
-      glow: "bg-[#F4C44E]/15",
+      icon: "/icons/draft.png",
     },
     {
-      label: "Cancel",
+      label: "Cancelled",
       value: stats.cancelled,
-      icon: "close" as const,
-      glow: "bg-[#FB7185]/15",
+      icon: "/icons/close.png",
     },
   ];
 
   return (
-    <div className="min-w-0 space-y-5 text-white">
+    <div className="min-w-0 space-y-5">
       <AdminPageHero
-        title={
-          <>
-            Manage{" "}
-            <span className="bg-gradient-to-r from-[#22D3EE] to-[#C4B5FD] bg-clip-text text-transparent">
-              Concerts
-            </span>
-          </>
-        }
-        description="View and manage all concerts across the LYNORA platform."
-        backgroundImage="/images/hero/ao.jpg"
-      />
+        eyebrow="SUPER ADMIN WORKSPACE"
+        title="Manage Concerts"
+        description="Monitor and manage all concerts registered on LYNORA."
+      >
+        <button
+          type="button"
+          onClick={loadConcerts}
+          disabled={loading}
+          className="rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#5456DE] px-4 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+        >
+          {loading ? "Loading..." : "↻ Refresh"}
+        </button>
+      </AdminPageHero>
 
-      {/* STATISTICS */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {statCards.map((item) => (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        {statCards.map((card) => (
           <div
-            key={item.label}
-            className="rounded-xl border border-[#343B60] bg-[#171D39] p-3.5 shadow-[0_8px_22px_rgba(0,0,0,.12)] sm:p-4"
+            key={card.label}
+            className="rounded-xl border border-white/[0.07] bg-[#161F3B] p-4"
           >
-            <div className="flex items-center gap-2.5">
-              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${item.glow}`}>
-                <PngIcon name={item.icon} size={20} />
-              </span>
-              <span className="truncate text-[11px] text-slate-400 sm:text-xs">
-                {item.label}
+            <div className="mb-3 flex items-center gap-2">
+              <div className="grid h-9 w-9 place-items-center rounded-lg bg-[#8B5CF6]/20">
+                <img
+                  src={card.icon}
+                  alt=""
+                  className="h-5 w-5 object-contain"
+                />
+              </div>
+              <span className="text-xs text-slate-400">
+                {card.label}
               </span>
             </div>
-            <p className="mt-3 text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
-              {item.value}
+
+            <p className="text-2xl font-extrabold text-white">
+              {formatNumber(card.value)}
             </p>
           </div>
         ))}
-      </section>
+      </div>
 
-      {/* CONCERT DIRECTORY */}
-      <section className="overflow-hidden rounded-xl border border-[#303957] bg-[#111A34] shadow-[0_12px_35px_rgba(0,0,0,.16)]">
-        <div className="flex flex-col gap-3 border-b border-white/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      <section className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#111A32]">
+        <div className="flex flex-col gap-3 border-b border-white/[0.08] p-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-base font-bold text-white sm:text-lg">
-              Concert Directory
+            <h2 className="font-bold text-white">
+              All Concerts
             </h2>
-            <p className="mt-1 text-[11px] text-slate-400">
-              Manage concert listings, organizers, ticket capacity, and publication status.
+            <p className="mt-1 text-xs text-slate-400">
+              {filteredConcerts.length} concerts found
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={loadConcerts}
-            disabled={loading}
-            className="rounded-lg border border-[#514477] px-3 py-2 text-xs font-semibold text-[#D8CCFF] transition hover:bg-white/5 disabled:opacity-50"
-          >
-            Refresh
-          </button>
-        </div>
-
-        {/* SEARCH & FILTER */}
-        <div className="grid grid-cols-1 gap-2.5 p-4 sm:grid-cols-[minmax(0,1fr)_170px_180px_170px] sm:px-5">
-          <label className="flex h-10 min-w-0 items-center gap-2.5 rounded-lg border border-[#514477] bg-[#0B1122] px-3 focus-within:border-[#8B5CF6]">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <input
+              type="search"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search concert, organizer, venue..."
-              className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-slate-500"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search concert, organizer..."
+              className="min-w-0 rounded-lg border border-white/10 bg-[#0B1122] px-3 py-2 text-sm text-white outline-none focus:border-[#8B5CF6] sm:w-64"
             />
-          </label>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-10 min-w-0 rounded-lg border border-[#394363] bg-[#171D39] px-3 text-xs text-slate-200 outline-none focus:border-[#8B5CF6]"
-          >
-            {[
-              "All Status",
-              "Pending",
-              "Published",
-              "Ongoing",
-              "Draft",
-              "Completed",
-              "Rejected",
-              "Cancelled",
-            ].map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
-
-          <select
-            value={organizerFilter}
-            onChange={(e) => setOrganizerFilter(e.target.value)}
-            className="h-10 min-w-0 rounded-lg border border-[#394363] bg-[#171D39] px-3 text-xs text-slate-200 outline-none focus:border-[#8B5CF6]"
-          >
-            <option>All Organizers</option>
-            {organizers.map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
-
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="h-10 min-w-0 rounded-lg border border-[#394363] bg-[#171D39] px-3 text-xs text-slate-200 outline-none focus:border-[#8B5CF6]"
-          >
-            <option>All Categories</option>
-            {categories.map((v) => (
-              <option key={v}>{v}</option>
-            ))}
-          </select>
+            <select
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              className="rounded-lg border border-white/10 bg-[#0B1122] px-3 py-2 text-sm text-white outline-none focus:border-[#8B5CF6]"
+            >
+              {FILTERS.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {error && (
-          <div className="mx-4 mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300 sm:mx-5">
+          <div className="m-4 rounded-lg border border-rose-500/20 bg-rose-500/10 p-4 text-sm text-rose-300">
             {error}
+            <button
+              type="button"
+              onClick={loadConcerts}
+              className="ml-3 font-bold underline"
+            >
+              Try again
+            </button>
           </div>
         )}
 
-        {/* CONCERT TABLE */}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[940px] border-collapse text-left">
-            <thead>
-              <tr className="bg-[#4025A5] text-[10px] font-bold uppercase tracking-wide text-white sm:text-[11px]">
-                <th className="px-4 py-3">Concert Details</th>
-                <th className="px-3 py-3">Date, Venue &amp; Category</th>
-                <th className="px-3 py-3">Organizer</th>
-                <th className="px-3 py-3 text-center">Tickets</th>
-                <th className="px-3 py-3">Status</th>
-                <th className="px-4 py-3 text-center">Actions</th>
+          <table className="w-full min-w-[850px] text-left">
+            <thead className="bg-[#3E2DAA] text-xs font-bold text-white">
+              <tr>
+                <th className="px-4 py-4">Concert Details</th>
+                <th className="px-4 py-4">Organizer</th>
+                <th className="px-4 py-4">Date & Venue</th>
+                <th className="px-4 py-4">Tickets Sold</th>
+                <th className="px-4 py-4">Gross Revenue</th>
+                <th className="px-4 py-4">Status</th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-[#28324F]">
+            <tbody className="divide-y divide-white/[0.07]">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-xs text-slate-400">
+                  <td
+                    colSpan={6}
+                    className="px-4 py-12 text-center text-sm text-slate-400"
+                  >
                     Loading concerts...
                   </td>
                 </tr>
-              ) : visible.length === 0 ? (
+              ) : filteredConcerts.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-xs text-slate-400">
+                  <td
+                    colSpan={6}
+                    className="px-4 py-12 text-center text-sm text-slate-400"
+                  >
                     No concerts found.
                   </td>
                 </tr>
               ) : (
-                visible.map((c) => {
-                  const status = statusLabel(c);
-
-                  return (
-                    <tr key={c.id} className="transition hover:bg-white/[0.025]">
-                      <td className="px-4 py-3">
-                        <div className="flex min-w-[220px] items-center gap-3">
+                filteredConcerts.map((concert) => (
+                  <tr
+                    key={concert.id}
+                    className="transition hover:bg-white/[0.025]"
+                  >
+                    <td className="px-4 py-4">
+                      <div className="flex min-w-[190px] items-center gap-3">
+                        {concert.poster_url ? (
                           <img
-                            src={imageUrl(c.poster_url)}
-                            alt={c.name}
-                            onError={(e) => {
-                              e.currentTarget.src = "/icons/music.png";
-                            }}
-                            className="h-14 w-12 shrink-0 rounded-md border border-white/10 object-cover"
+                            src={imageUrl(concert.poster_url)}
+                            alt=""
+                            className="h-12 w-12 shrink-0 rounded-lg object-cover"
                           />
-                          <div className="min-w-0">
-                            <p className="max-w-[180px] truncate text-xs font-bold text-white">
-                              {c.name}
-                            </p>
-                            <p className="mt-1 text-[10px] text-slate-500">
-                              ID: CNS-{String(c.id).padStart(3, "0")}
-                            </p>
+                        ) : (
+                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-[#27234A] text-lg">
+                            🎵
                           </div>
-                        </div>
-                      </td>
+                        )}
 
-                      <td className="px-3 py-3">
-                        <div className="space-y-1.5 text-[10px] text-slate-300">
-                          <p className="flex items-center gap-1.5">
-                            <PngIcon name="calendar" size={13} />
-                            {formatDate(c.start_date)}
+                        <div className="min-w-0">
+                          <p className="line-clamp-2 text-sm font-bold text-white">
+                            {concert.name}
                           </p>
-                          <p className="flex items-center gap-1.5">
-                            <PngIcon name="location" size={13} />
-                            <span className="max-w-[145px] truncate">
-                              {c.venue_name}
-                            </span>
-                          </p>
-                          <p className="flex items-center gap-1.5">
-                            <PngIcon name="category" size={13} />
-                            {c.category_name}
+                          <p className="mt-1 text-xs text-slate-400">
+                            {concert.category_name || "-"}
                           </p>
                         </div>
-                      </td>
+                      </div>
+                    </td>
 
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#8B5CF6] to-[#22D3EE] text-[10px] font-bold">
-                            {(c.organizer_name || "O").slice(0, 1).toUpperCase()}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="max-w-[110px] truncate text-xs font-semibold">
-                              {c.organizer_name}
-                            </p>
-                            <p className="text-[10px] text-slate-500">
-                              Organizer
-                            </p>
-                          </div>
-                        </div>
-                      </td>
+                    <td className="px-4 py-4 text-sm text-slate-300">
+                      {concert.organizer_name || "-"}
+                    </td>
 
-                      <td className="px-3 py-3 text-center">
-                        <p className="text-xs font-bold text-white">
-                          {c.sold.toLocaleString("id-ID")}
-                        </p>
-                        <p className="text-[10px] text-slate-500">
-                          / {c.quota.toLocaleString("id-ID")}
-                        </p>
-                      </td>
+                    <td className="px-4 py-4">
+                      <p className="text-sm text-white">
+                        {formatDate(concert.start_date)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {concert.venue_name || "-"}
+                      </p>
+                    </td>
 
-                      <td className="px-3 py-3">
-                        <Status value={status} />
-                      </td>
+                    <td className="px-4 py-4 text-sm text-slate-300">
+                      {formatNumber(concert.sold)} /{" "}
+                      {formatNumber(concert.quota)}
+                    </td>
 
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center">
-                          <button
-                            type="button"
-                            title="View Concert Details"
-                            aria-label={`View details of ${c.name}`}
-                            onClick={() => setSelected(c)}
-                            className="grid h-9 w-9 place-items-center rounded-lg transition hover:bg-white/10"
-                          >
-                            <PngIcon name="eye" size={19} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+                    <td className="px-4 py-4 text-sm font-semibold text-white">
+                      {formatRupiah(concert.revenue)}
+                    </td>
+
+                    <td className="px-4 py-4">
+                      <span
+                        className={`inline-flex whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${statusStyle(
+                          concert.display_status,
+                        )}`}
+                      >
+                        {concert.display_status}
+                      </span>
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
-
-        {/* PAGINATION */}
-        <div className="flex flex-col gap-2 border-t border-white/[0.07] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <p className="text-[10px] text-slate-400">
-            Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, filtered.length)} of {filtered.length} concerts
-          </p>
-
-          <div className="flex items-center gap-1.5">
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => setPage(n)}
-                className={`h-7 min-w-7 rounded-md border px-2 text-[10px] font-semibold ${
-                  page === n
-                    ? "border-[#8B5CF6] bg-[#7544DD] text-white"
-                    : "border-[#38415E] bg-[#111A34] text-slate-300 hover:border-[#8B5CF6]"
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-        </div>
       </section>
-
-      {/* CONCERT DETAIL MODAL */}
-      {selected && (
-        <div
-          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4"
-          onClick={() => setSelected(null)}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-[#6750A6] bg-[#111A34] shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-              <div>
-                <p className="text-[10px] font-bold tracking-[2px] text-[#A78BFA]">
-                  CONCERT DETAILS
-                </p>
-                <h3 className="mt-1 text-lg font-bold text-white">
-                  {selected.name}
-                </h3>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSelected(null)}
-                className="rounded-lg px-3 py-1 text-xs font-semibold text-slate-400 hover:bg-white/10"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="grid gap-4 p-5 sm:grid-cols-[150px_1fr]">
-              <img
-                src={imageUrl(selected.poster_url)}
-                alt={selected.name}
-                className="h-48 w-full rounded-lg object-cover sm:w-[150px]"
-              />
-
-              <div className="space-y-3 text-xs">
-                <div>
-                  <p className="text-slate-500">Organizer</p>
-                  <p className="font-semibold text-white">
-                    {selected.organizer_name}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-slate-500">Date</p>
-                  <p className="text-white">
-                    {formatDate(selected.start_date)} – {formatDate(selected.end_date)}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-slate-500">Venue</p>
-                  <p className="text-white">
-                    {selected.venue_name} · {selected.venue_address}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-slate-500">Category</p>
-                  <p className="text-white">{selected.category_name}</p>
-                </div>
-
-                <div>
-                  <p className="text-slate-500">Tickets sold / quota</p>
-                  <p className="text-white">
-                    {selected.sold.toLocaleString("id-ID")} / {selected.quota.toLocaleString("id-ID")}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-slate-500">Status</p>
-                  <Status value={statusLabel(selected)} />
-                </div>
-
-                <div>
-                  <p className="text-slate-500">Revenue</p>
-                  <p className="font-semibold text-white">
-                    {money(selected.revenue)}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end border-t border-white/10 p-4">
-              <button
-                type="button"
-                onClick={() => setSelected(null)}
-                className="rounded-lg border border-white/15 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5"
-              >
-                Close
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </div>
   );
 }

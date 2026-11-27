@@ -146,10 +146,12 @@ export default function OrganizerShell({
     }
     loadNotifications();
     const refresh = () => loadNotifications();
+    const notificationPoll = window.setInterval(refresh, 15000);
     window.addEventListener("focus", refresh);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", refresh);
+      window.clearInterval(notificationPoll);
     };
   }, []);
   const profilePhoto = getProfilePhoto(user);
@@ -233,7 +235,7 @@ export default function OrganizerShell({
                 Halo, {user?.name?.split(" ")[0] || "EO"} 👋
               </h1>
               <p className="mt-0.5 hidden max-w-full truncate text-[11px] text-slate-400 xl:block">
-                Kelola konser dan pantau performa event kamu di LYNORA.
+                Manage concerts and monitor your event's performance on LYNORA.
               </p>
             </div>
             {/* RIGHT ACTIONS */}

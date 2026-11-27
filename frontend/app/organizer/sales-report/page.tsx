@@ -634,14 +634,8 @@ export default function OrganizerSalesReportPage() {
         {/* PAGE HERO */}
         <OrganizerPageHero
           eyebrow="ORGANIZER ANALYTICS"
-          title={
-            <>
-              Sales{" "}
-              <span className="bg-[linear-gradient(90deg,#A78BFA,#22D3EE)] bg-clip-text text-transparent">
-                Report
-              </span>
-            </>
-          }
+          title="Sales"
+          highlight="Report"
           description="Monitor ticket sales, revenue performance, and attendance across your concerts."
           className="mb-0"
         >
